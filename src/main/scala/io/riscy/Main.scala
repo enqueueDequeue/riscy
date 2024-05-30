@@ -21,8 +21,6 @@ object Main {
 
   def main(args: Array[String]): Unit = {
     test(new PhyRegs(128)) { dut =>
-      dut.io.rs1En.poke(true.B)
-      dut.io.rs2En.poke(true.B)
       dut.io.rdEn.poke(true.B)
 
       dut.io.rd.poke(1.U)
@@ -101,7 +99,7 @@ object Main {
       }
     }
 
-    test(new Fetch(64, () => new MockICache())) { dut =>
+    test(new Fetch(64, 32, () => new MockICache())) { dut =>
       dut.io.inst.ready.poke(true.B)
 
       for(i <- 0 until 1024) {
@@ -117,7 +115,7 @@ object Main {
 
     println(
       ChiselStage.emitSystemVerilog(
-        gen = new PhyRegs(128),
+        gen = new InOrderCPU(),
         firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info")
       )
     )

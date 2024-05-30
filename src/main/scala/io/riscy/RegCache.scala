@@ -3,9 +3,9 @@ package io.riscy
 import chisel3.{Mem, UInt, fromBooleanToLiteral, fromIntToWidth, when}
 
 class RegCache(addressWidth: Int, dataWidth: Int) extends Cache(addressWidth, dataWidth) {
-  private val NUM_ENTRIES = 1024
+  val NUM_ENTRIES = 1024
 
-  private val values = Mem(NUM_ENTRIES, UInt(dataWidth.W))
+  val values = Mem(NUM_ENTRIES, UInt(dataWidth.W))
 
   // always ready to read and write the stuff
   io.read.ready := true.B

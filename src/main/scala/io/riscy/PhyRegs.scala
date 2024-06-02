@@ -16,12 +16,12 @@ class PhyRegs(nRegisters: Int) extends Module {
     val rdValue = Input(UInt(DATA_WIDTH.W))
   })
 
-  val values = Mem(nRegisters, UInt(DATA_WIDTH.W))
+  val regs = Mem(nRegisters, UInt(DATA_WIDTH.W))
 
-  io.rs1Value := Mux(io.rs1 === 0.U, 0.U, values(io.rs1))
-  io.rs2Value := Mux(io.rs2 === 0.U, 0.U, values(io.rs2))
+  io.rs1Value := Mux(io.rs1 === 0.U, 0.U, regs(io.rs1))
+  io.rs2Value := Mux(io.rs2 === 0.U, 0.U, regs(io.rs2))
 
   when(io.rdEn) {
-    values(io.rd) := io.rdValue
+    regs(io.rd) := io.rdValue
   }
 }

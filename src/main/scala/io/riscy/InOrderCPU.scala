@@ -1,36 +1,48 @@
 package io.riscy
 
-import chisel3.{Module, Mux, RegInit, UInt, Wire, fromIntToLiteral, fromIntToWidth, when}
+import chisel3.util.Decoupled
+import chisel3.{Bundle, Flipped, Module, Mux, RegInit, UInt, Wire, fromIntToLiteral, fromIntToWidth, when}
 
 class InOrderCPU extends Module {
   // The magic instruction
   // Decode to find why this is the NOP
   val NOP = 0x33
 
+  val N_ARCH_REGISTERS = 32
   val ARCH_WIDTH = 64
   val ADDR_WIDTH = ARCH_WIDTH
   val DATA_WIDTH = ARCH_WIDTH
-  val I_WIDTH = 32
+  val INST_WIDTH = 32
+
+  val io = IO(new Bundle {
+    val iReadAddr = Decoupled(UInt(ADDR_WIDTH.W))
+    val iReadValue = Flipped(Decoupled(UInt(INST_WIDTH.W)))
+  })
 
   val pc = RegInit(0.U(ARCH_WIDTH.W))
-  val phyRegs = Module(new PhyRegs(32))
+  val phyRegs = Module(new PhyRegs(N_ARCH_REGISTERS))
 
-  val fetch = Module(new Fetch(ADDR_WIDTH, I_WIDTH, () => new RegCache(ARCH_WIDTH, I_WIDTH)))
-  val decode = Module(new Decode(I_WIDTH, DATA_WIDTH))
+  val fetch = Module(new Fetch(ADDR_WIDTH, INST_WIDTH))
+  val decode = Module(new Decode(INST_WIDTH, DATA_WIDTH))
   val execute = Module(new Execute(DATA_WIDTH))
   val memory = Module(new Memory(ADDR_WIDTH, DATA_WIDTH))
   val writeBack = Module(new WriteBack(DATA_WIDTH))
 
-  val fetchedInst = Wire(UInt(I_WIDTH.W))
+  val fetchedInst = Wire(UInt(INST_WIDTH.W))
+
+  // checks
+  assert(N_ARCH_REGISTERS == Decode.N_ARCH_REGISTERS)
 
   // fetch
   fetch.io.pc := pc
+  fetch.io.iReadAddr <> io.iReadAddr
+  fetch.io.iReadValue <> io.iReadValue
 
   // decode
   decode.io.inst := fetchedInst
-  phyRegs.io.rs1 := fetchedInst(19, 15)
-  phyRegs.io.rs2 := fetchedInst(24, 20)
-  phyRegs.io.rd := fetchedInst(11, 7)
+  phyRegs.io.rs1 := decode.io.signals.rs1
+  phyRegs.io.rs2 := decode.io.signals.rs2
+  phyRegs.io.rd := decode.io.signals.rd
   phyRegs.io.rdEn := decode.io.signals.regWrite
 
   // execute

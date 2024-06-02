@@ -1,27 +1,22 @@
 package io.riscy
 
 import chisel3.util.Decoupled
-import chisel3.{Bundle, Input, Module, UInt, fromIntToWidth, when}
+import chisel3.{Bundle, Flipped, Input, Module, UInt, fromIntToWidth, when}
 
-class Fetch(addressWidth: Int, instructionWidth: Int, iCacheGen: () => Cache) extends Module {
+class Fetch(addressWidth: Int, instructionWidth: Int) extends Module {
 
   val io = IO(new Bundle {
     val pc = Input(UInt(addressWidth.W))
     val inst = Decoupled(UInt(instructionWidth.W))
+    val iReadAddr = Decoupled(UInt(addressWidth.W))
+    val iReadValue = Flipped(Decoupled(UInt(instructionWidth.W)))
   })
 
-  val iCache = Module(iCacheGen())
-
-  assert(instructionWidth == iCache.dataWidth)
-  assert(addressWidth == iCache.addressWidth)
-
-  when(iCache.io.read.ready) {
-    iCache.io.read.enq(io.pc)
+  when(io.iReadAddr.ready) {
+    io.iReadAddr.enq(io.pc)
   }.otherwise {
-    iCache.io.read.noenq()
+    io.iReadAddr.noenq()
   }
 
-  iCache.io.write.noenq()
-
-  iCache.io.readValue <> io.inst
+  io.iReadValue <> io.inst
 }

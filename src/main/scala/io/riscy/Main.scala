@@ -99,20 +99,6 @@ object Main {
       }
     }
 
-    test(new Fetch(64, 32, () => new MockICache())) { dut =>
-      dut.io.inst.ready.poke(true.B)
-
-      for(i <- 0 until 1024) {
-        dut.io.pc.poke(i.U)
-
-        while(!dut.io.inst.valid.peek().litToBoolean) {
-          dut.clock.step()
-        }
-
-        dut.io.inst.bits.expect(i.U)
-      }
-    }
-
     println(
       ChiselStage.emitSystemVerilog(
         gen = new InOrderCPU(),

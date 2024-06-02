@@ -8,7 +8,7 @@ class Execute(dataWidth: Int) extends Module {
     val a = Input(UInt(dataWidth.W))
     val b = Input(UInt(dataWidth.W))
     val bNot = Input(Bool())
-    val op = Input(OpCode())
+    val op = Input(ExecuteOp())
     val result = Output(UInt(dataWidth.W))
     val zero = Output(Bool())
   })
@@ -24,34 +24,37 @@ class Execute(dataWidth: Int) extends Module {
   io.result := 0.U
 
   switch(io.op) {
-    is(OpCode.ADD) {
+    is(ExecuteOp.NOP) {
+      io.result := 0.U
+    }
+    is(ExecuteOp.ADD) {
       io.result := io.a + io.b
     }
-    is(OpCode.SUB) {
+    is(ExecuteOp.SUB) {
       io.result := io.a - io.b
     }
-    is(OpCode.SLL) {
+    is(ExecuteOp.SLL) {
       io.result := (io.a << shamt)(dataWidth - 1, 0)
     }
-    is(OpCode.SRL) {
+    is(ExecuteOp.SRL) {
       io.result := Cat(0.U(dataWidth.W), io.a >> shamt)(dataWidth - 1, 0)
     }
-    is(OpCode.SRA) {
+    is(ExecuteOp.SRA) {
       io.result := Cat(Fill(dataWidth, io.a(dataWidth - 1)), io.a >> shamt)(dataWidth - 1, 0)
     }
-    is(OpCode.SLT) {
+    is(ExecuteOp.SLT) {
       io.result := Cat(0.U((dataWidth - 1).W), (io.a.asSInt < io.b.asSInt).asUInt)
     }
-    is(OpCode.SLU) {
+    is(ExecuteOp.SLU) {
       io.result := Cat(0.U((dataWidth - 1).W), (io.a < io.b).asUInt)
     }
-    is(OpCode.XOR) {
+    is(ExecuteOp.XOR) {
       io.result := io.a ^ io.b
     }
-    is(OpCode.OR) {
+    is(ExecuteOp.OR) {
       io.result := io.a | io.b
     }
-    is(OpCode.AND) {
+    is(ExecuteOp.AND) {
       io.result := io.a & io.b
     }
   }

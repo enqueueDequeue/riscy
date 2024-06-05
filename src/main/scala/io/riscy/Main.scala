@@ -99,10 +99,66 @@ object Main {
       }
     }
 
+    test(new InOrderCPU()) { dut =>
+      val instructions = Seq(
+        0x00828293, // ADDI x5, x5, 8
+        0x0002a303, // LW x6, 0(x5)
+        0x00a30313, // ADDI x6, x6, 10
+        0x0062a023  // SW x6, 0(x5)
+      )
+
+      dut.io.iReadAddr.ready.poke(true.B)
+      dut.io.iReadAddr.valid.expect(true.B)
+      dut.io.iReadAddr.bits.expect(0.U)
+
+      dut.io.iReadValue.valid.poke(true.B)
+      dut.io.iReadValue.bits.poke(instructions(0).asUInt)
+      dut.io.iReadValue.ready.expect(true.B)
+
+      dut.clock.step()
+
+      dut.io.iReadAddr.valid.expect(true.B)
+      dut.io.iReadAddr.bits.expect(4.U)
+
+      dut.io.iReadValue.ready.expect(true.B)
+      dut.io.iReadValue.valid.poke(true.B)
+      dut.io.iReadValue.bits.poke(instructions(1).asUInt)
+
+      dut.io.dReadAddr.expect(8.U)
+      dut.io.dReadLen.expect(4.U)
+      dut.io.dReadValue.poke(10.U)
+
+      dut.clock.step()
+
+      dut.io.iReadAddr.ready := true.B
+
+      dut.io.iReadAddr.valid.expect(true.B)
+      dut.io.iReadAddr.bits.expect(0.U)
+
+      dut.io.iReadValue.ready.expect(true.B)
+      dut.io.iReadValue.valid.poke(true.B)
+      dut.io.iReadValue.bits.poke(instructions(2).asUInt)
+
+      dut.clock.step()
+
+      dut.io.iReadAddr.valid.expect(true.B)
+      dut.io.iReadAddr.bits.expect(4.U)
+
+      dut.io.iReadValue.ready.expect(true.B)
+      dut.io.iReadValue.valid.poke(true.B)
+      dut.io.iReadValue.bits.poke(instructions(1).asUInt)
+
+      dut.io.dWriteAddr.expect(8.U)
+      dut.io.dWriteLen.expect(4.U)
+      dut.io.dWriteValue.poke(20.U)
+
+      dut.clock.step()
+    }
+
     println(
       ChiselStage.emitSystemVerilog(
         gen = new InOrderCPU(),
-        firtoolOpts = Array("-disable-all-randomization", "-strip-debug-info")
+        firtoolOpts = Array("-disable-all-randomization")
       )
     )
   }

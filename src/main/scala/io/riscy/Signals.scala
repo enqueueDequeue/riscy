@@ -4,13 +4,15 @@ import chisel3.util.log2Ceil
 import chisel3.{Bool, Bundle, UInt, fromIntToWidth}
 
 class Signals(nArchRegisters:Int, dataWidth: Int) extends Bundle {
+  val jump = Bool()
   val branch = Bool()
-  val memRead = Bool()
   val memToReg = Bool()
-  val memWrite = Bool()
-  val aluSrc = Bool()
+  val memRead = Size()
+  val memWrite = Size()
+  val rs1Pc = Bool()
+  val rs2Imm = Bool()
   val regWrite = Bool()
-  val bNot = Bool()
+  val branchInvert = Bool()
   val aluOp = ExecuteOp()
   val immediate = UInt(dataWidth.W)
   val rs1 = UInt(log2Ceil(nArchRegisters).W)

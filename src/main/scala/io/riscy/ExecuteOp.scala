@@ -6,12 +6,19 @@ object ExecuteOp extends ChiselEnum {
   val NOP = Value
   val ADD = Value
   val SUB = Value
-  val SLL = Value
-  val SRL = Value
-  val SRA = Value
-  val SLT = Value
-  val SLU = Value
   val XOR = Value
   val OR = Value
   val AND = Value
+
+  // shift left logical
+  val SLL = Value
+  // shift right logical
+  val SRL = Value
+  // shift right arithmetic
+  val SRA = Value
+
+  // set less than
+  val SLT = Value
+  // set less than unsigned
+  val SLTU = Value
 }

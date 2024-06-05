@@ -1,13 +1,14 @@
 package io.riscy
 
-import chisel3.util.Decoupled
-import chisel3.{Bundle, Flipped, Module, Mux, RegInit, UInt, Wire, fromIntToLiteral, fromIntToWidth, when}
+import chisel3.util.{Decoupled, log2Ceil}
+import chisel3.{Bool, Bundle, Flipped, Input, Module, Mux, Output, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, when}
 
 class InOrderCPU extends Module {
   // The magic instruction
   // Decode to find why this is the NOP
   val NOP = 0x33
 
+  val BIT_WIDTH = 8
   val N_ARCH_REGISTERS = 32
   val ARCH_WIDTH = 64
   val ADDR_WIDTH = ARCH_WIDTH
@@ -17,9 +18,20 @@ class InOrderCPU extends Module {
   val io = IO(new Bundle {
     val iReadAddr = Decoupled(UInt(ADDR_WIDTH.W))
     val iReadValue = Flipped(Decoupled(UInt(INST_WIDTH.W)))
+
+    // todo: make these decoupled
+    val dReadLen = Output(UInt((DATA_WIDTH / BIT_WIDTH).W))
+    val dReadAddr = Output(UInt(ADDR_WIDTH.W))
+    val dReadValue = Input(UInt(DATA_WIDTH.W))
+
+    val dWriteLen = Output(UInt((DATA_WIDTH / BIT_WIDTH).W))
+    val dWriteAddr = Output(UInt(ADDR_WIDTH.W))
+    val dWriteValue = Output(UInt(DATA_WIDTH.W))
   })
 
   val pc = RegInit(0.U(ARCH_WIDTH.W))
+  val nextPc = pc + 4.U
+
   val phyRegs = Module(new PhyRegs(N_ARCH_REGISTERS))
 
   val fetch = Module(new Fetch(ADDR_WIDTH, INST_WIDTH))
@@ -32,11 +44,21 @@ class InOrderCPU extends Module {
 
   // checks
   assert(N_ARCH_REGISTERS == Decode.N_ARCH_REGISTERS)
+  assert(BIT_WIDTH == Memory.BIT_WIDTH)
+
+  // setup
+  memory.io.dReadLen <> io.dReadLen
+  memory.io.dReadAddr <> io.dReadAddr
+  memory.io.dReadValue <> io.dReadValue
+  memory.io.dWriteLen <> io.dWriteLen
+  memory.io.dWriteAddr <> io.dWriteAddr
+  memory.io.dWriteValue <> io.dWriteValue
+
+  fetch.io.iReadAddr <> io.iReadAddr
+  fetch.io.iReadValue <> io.iReadValue
 
   // fetch
   fetch.io.pc := pc
-  fetch.io.iReadAddr <> io.iReadAddr
-  fetch.io.iReadValue <> io.iReadValue
 
   // decode
   decode.io.inst := fetchedInst
@@ -47,26 +69,32 @@ class InOrderCPU extends Module {
 
   // execute
   execute.io.op := decode.io.signals.aluOp
-  execute.io.bNot := decode.io.signals.bNot
-  execute.io.a := phyRegs.io.rs1Value
-  execute.io.b := phyRegs.io.rs2Value
+  execute.io.branchInvert := decode.io.signals.branchInvert
+  execute.io.a := Mux(decode.io.signals.rs1Pc, pc, phyRegs.io.rs1Value)
+  execute.io.b := Mux(decode.io.signals.rs2Imm, decode.io.signals.immediate, phyRegs.io.rs2Value)
 
   // memory
   memory.io.address := execute.io.result
   memory.io.writeData := phyRegs.io.rs2Value
-  memory.io.writeEn := decode.io.signals.memWrite
-  memory.io.readEn := decode.io.signals.memRead
+  memory.io.writeSize := decode.io.signals.memWrite
+  memory.io.readSize := decode.io.signals.memRead
 
   // write-back
   writeBack.io.memToReg := decode.io.signals.memToReg
-  writeBack.io.execResult := execute.io.result
+  writeBack.io.execResult := Mux(decode.io.signals.jump, execute.io.result, nextPc)
   writeBack.io.readData := memory.io.readData
 
-  phyRegs.io.rdValue := writeBack.io.execResult
+  phyRegs.io.rdValue := writeBack.io.result
 
+  // control
   when(fetch.io.inst.valid) {
     fetchedInst := fetch.io.inst.deq()
-    pc := Mux(execute.io.zero && decode.io.signals.branch, pc + decode.io.signals.immediate, pc + 4.U)
+
+    when(decode.io.signals.jump) {
+      pc := execute.io.result
+    }.otherwise {
+      pc := Mux(execute.io.zero && decode.io.signals.branch, pc + decode.io.signals.immediate, nextPc)
+    }
   }.otherwise {
     fetch.io.inst.nodeq()
     fetchedInst := NOP.U

@@ -1,8 +1,9 @@
 package io.riscy
 
 import chisel3.util.{Cat, Fill}
-import chisel3.{Bundle, Input, Module, Output, PrintableHelper, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, when, printf}
+import chisel3.{Bundle, Input, Module, Output, PrintableHelper, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.Decode.{INST_WIDTH, N_ARCH_REGISTERS}
+import io.riscy.stages.MemRWSize
 
 class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
   assert(instructionWidth == INST_WIDTH)
@@ -25,8 +26,8 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
   io.signals.jump := false.B
   io.signals.branch := false.B
   io.signals.memToReg := false.B
-  io.signals.memRead := Size.BYTES_NO
-  io.signals.memWrite := Size.BYTES_NO
+  io.signals.memRead := MemRWSize.BYTES_NO
+  io.signals.memWrite := MemRWSize.BYTES_NO
   io.signals.rs1Pc := false.B
   io.signals.rs2Imm := false.B
   io.signals.regWrite := false.B
@@ -129,7 +130,7 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
     printf(cf"inst: LB\n")
 
     io.signals.aluOp := ExecuteOp.ADD
-    io.signals.memRead := Size.BYTES_1S
+    io.signals.memRead := MemRWSize.BYTES_1S
     io.signals.memToReg := true.B
     io.signals.regWrite := true.B
     io.signals.rs2Imm := true.B
@@ -137,7 +138,7 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
     printf(cf"inst: LBU\n")
 
     io.signals.aluOp := ExecuteOp.ADD
-    io.signals.memRead := Size.BYTES_1U
+    io.signals.memRead := MemRWSize.BYTES_1U
     io.signals.memToReg := true.B
     io.signals.regWrite := true.B
     io.signals.rs2Imm := true.B
@@ -145,7 +146,7 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
     printf(cf"inst: LH\n")
 
     io.signals.aluOp := ExecuteOp.ADD
-    io.signals.memRead := Size.BYTES_2S
+    io.signals.memRead := MemRWSize.BYTES_2S
     io.signals.memToReg := true.B
     io.signals.regWrite := true.B
     io.signals.rs2Imm := true.B
@@ -153,7 +154,7 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
     printf(cf"inst: LHU\n")
 
     io.signals.aluOp := ExecuteOp.ADD
-    io.signals.memRead := Size.BYTES_2U
+    io.signals.memRead := MemRWSize.BYTES_2U
     io.signals.memToReg := true.B
     io.signals.regWrite := true.B
     io.signals.rs2Imm := true.B
@@ -168,7 +169,7 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
     printf(cf"inst: LW\n")
 
     io.signals.aluOp := ExecuteOp.ADD
-    io.signals.memRead := Size.BYTES_4S
+    io.signals.memRead := MemRWSize.BYTES_4S
     io.signals.memToReg := true.B
     io.signals.regWrite := true.B
     io.signals.rs2Imm := true.B
@@ -187,14 +188,14 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
     printf(cf"inst: SB\n")
 
     io.signals.aluOp := ExecuteOp.ADD
-    io.signals.memWrite := Size.BYTES_1U
+    io.signals.memWrite := MemRWSize.BYTES_1U
     io.signals.rs2Imm := true.B
     io.signals.immediate := immediateS
   }.elsewhen(OpCode.SH === io.inst) {
     printf(cf"inst: SH\n")
 
     io.signals.aluOp := ExecuteOp.ADD
-    io.signals.memWrite := Size.BYTES_2U
+    io.signals.memWrite := MemRWSize.BYTES_2U
     io.signals.rs2Imm := true.B
     io.signals.immediate := immediateS
   }.elsewhen(OpCode.SLL === io.inst) {
@@ -243,7 +244,7 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
     printf(cf"inst: SW\n")
 
     io.signals.aluOp := ExecuteOp.ADD
-    io.signals.memWrite := Size.BYTES_4U
+    io.signals.memWrite := MemRWSize.BYTES_4U
     io.signals.rs2Imm := true.B
     io.signals.immediate := immediateS
   }.elsewhen(OpCode.XOR === io.inst) {

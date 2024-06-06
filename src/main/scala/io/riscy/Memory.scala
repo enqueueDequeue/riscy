@@ -1,8 +1,8 @@
 package io.riscy
 
-import chisel3.util.{Cat, Fill, log2Ceil}
-import chisel3.{Bool, Bundle, ChiselEnum, Input, Module, Output, UInt, fromIntToLiteral, fromIntToWidth, when}
-import io.riscy.Memory.{BIT_WIDTH, getSizeBytes, getSizeLit, isSigned}
+import chisel3.util.{Cat, Fill, MuxLookup}
+import chisel3.{Bool, Bundle, ChiselEnum, Input, Module, Mux, Output, PrintableHelper, UInt, fromIntToLiteral, fromIntToWidth, printf}
+import io.riscy.Memory.{BIT_WIDTH, getSizeBytes, getSizeBytesLit, isSigned}
 
 class Memory(addressWidth: Int, dataWidth: Int) extends Module {
   assert(dataWidth <= 8 * BIT_WIDTH)
@@ -22,9 +22,7 @@ class Memory(addressWidth: Int, dataWidth: Int) extends Module {
     val dWriteValue = Output(UInt(dataWidth.W))
   })
 
-  // offset after which the data actually starts
-  // if the read length is only
-  val dataOffsetBits = dataWidth - (BIT_WIDTH * getSizeLit(io.readSize))
+  printf(cf"dReadValue: ${io.dReadValue}%x\n")
 
   io.dReadAddr := io.address
   io.dWriteAddr := io.address
@@ -41,11 +39,20 @@ class Memory(addressWidth: Int, dataWidth: Int) extends Module {
   // which usually takes a clock cycle (in real world)
   // to return the value, sign extension might have yield
   // in lower cycle time in this stage
-  when(isSigned(io.readSize)) {
-    io.readData := Cat(Fill(dataWidth, io.dReadValue(dataWidth - 1)), io.dReadValue)(dataWidth + dataOffsetBits, dataOffsetBits)
-  }.otherwise {
-    io.readData := Cat(Fill(dataWidth, 0.U(1.W)), io.dReadValue)(dataWidth + dataOffsetBits, dataOffsetBits)
-  }
+  val extension = Mux(isSigned(io.readSize), Fill(dataWidth, io.dReadValue(dataWidth - 1)), Fill(dataWidth, 0.U(1.W)))
+
+  // If the read is only not dataWidth long,
+  // then the read is expected to be present in
+  // the most significant part of the word
+  io.readData := MuxLookup(io.readSize, 0.U)(
+    Size.all
+      .filter { s => s != Size.BYTES_NO }
+      .map { s =>
+        val readSizeBytes = getSizeBytesLit(s)
+        val dataOffsetBits = dataWidth - (BIT_WIDTH * readSizeBytes)
+
+        s -> Cat(extension, io.dReadValue)(dataWidth + dataOffsetBits, dataOffsetBits)
+      })
 }
 
 object Size extends ChiselEnum {
@@ -63,8 +70,8 @@ object Size extends ChiselEnum {
 object Memory {
   val BIT_WIDTH = 8
 
-  def getSizeLit(size: Size.Type): BigInt = {
-    4
+  def getSizeBytesLit(size: Size.Type): Int = {
+    size.litValue.toInt >> 1
   }
 
   def getSizeBytes(size: Size.Type): UInt = {

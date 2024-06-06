@@ -60,5 +60,11 @@ class Execute(dataWidth: Int) extends Module {
       zeroInternal := result.asBool
       io.result := Cat(0.U((dataWidth - 1).W), result)
     }
+    is(ExecuteOp.FW_A) {
+      io.result := io.a
+    }
+    is(ExecuteOp.FW_B) {
+      io.result := io.b
+    }
   }
 }

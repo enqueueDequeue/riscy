@@ -1,7 +1,7 @@
 package io.riscy
 
-import chisel3.util.{Decoupled, log2Ceil}
-import chisel3.{Bool, Bundle, Flipped, Input, Module, Mux, Output, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, when}
+import chisel3.util.Decoupled
+import chisel3.{Bundle, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromIntToLiteral, fromIntToWidth, when, printf}
 
 class InOrderCPU extends Module {
   // The magic instruction
@@ -39,6 +39,11 @@ class InOrderCPU extends Module {
   val execute = Module(new Execute(DATA_WIDTH))
   val memory = Module(new Memory(ADDR_WIDTH, DATA_WIDTH))
   val writeBack = Module(new WriteBack(DATA_WIDTH))
+
+  printf(cf"pc: $pc\n")
+  printf(cf"signals: ${decode.io.signals}\n")
+  printf(cf"a: ${execute.io.a}, b: ${execute.io.b}, result: ${execute.io.result}\n")
+  printf(cf"wb: ${writeBack.io.result}%x\n")
 
   val fetchedInst = Wire(UInt(INST_WIDTH.W))
 
@@ -81,7 +86,7 @@ class InOrderCPU extends Module {
 
   // write-back
   writeBack.io.memToReg := decode.io.signals.memToReg
-  writeBack.io.execResult := Mux(decode.io.signals.jump, execute.io.result, nextPc)
+  writeBack.io.execResult := Mux(decode.io.signals.jump, nextPc, execute.io.result)
   writeBack.io.readData := memory.io.readData
 
   phyRegs.io.rdValue := writeBack.io.result

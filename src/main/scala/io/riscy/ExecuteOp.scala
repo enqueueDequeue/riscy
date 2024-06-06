@@ -21,4 +21,7 @@ object ExecuteOp extends ChiselEnum {
   val SLT = Value
   // set less than unsigned
   val SLTU = Value
+
+  val FW_A = Value
+  val FW_B = Value
 }

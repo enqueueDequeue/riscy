@@ -1,7 +1,8 @@
 package io.riscy
 
 import chisel3.util.Decoupled
-import chisel3.{Bundle, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromIntToLiteral, fromIntToWidth, when, printf}
+import chisel3.{Bundle, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromIntToLiteral, fromIntToWidth, printf, when}
+import io.riscy.stages.{Decode, Execute, Fetch, Memory, PhyRegs, WriteBack}
 
 class InOrderCPU extends Module {
   // The magic instruction

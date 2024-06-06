@@ -1,4 +1,4 @@
-package io.riscy
+package io.riscy.stages
 
 import chisel3.util.log2Ceil
 import chisel3.{Bool, Bundle, Input, Mem, Module, Mux, Output, UInt, fromIntToLiteral, fromIntToWidth, when}

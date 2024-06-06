@@ -5,6 +5,7 @@ import chiseltest.RawTester.test
 import chiseltest.simulator.WriteVcdAnnotation
 import chiseltest.{testableBool, testableClock, testableData}
 import circt.stage.ChiselStage
+import io.riscy.stages.PhyRegs
 
 import scala.util.control.Breaks.{break, breakable}
 

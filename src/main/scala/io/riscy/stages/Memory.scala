@@ -1,8 +1,8 @@
-package io.riscy
+package io.riscy.stages
 
 import chisel3.util.{Cat, Fill, MuxLookup}
 import chisel3.{Bool, Bundle, Input, Module, Mux, Output, PrintableHelper, UInt, fromIntToLiteral, fromIntToWidth, printf}
-import io.riscy.Memory.{BIT_WIDTH, getSizeBytes, getSizeBytesLit, isSigned}
+import io.riscy.stages.Memory.{BIT_WIDTH, getSizeBytes, getSizeBytesLit, isSigned}
 import io.riscy.stages.MemRWSize
 
 class Memory(addressWidth: Int, dataWidth: Int) extends Module {

@@ -1,9 +1,8 @@
-package io.riscy
+package io.riscy.stages
 
 import chisel3.util.{Cat, Fill}
 import chisel3.{Bundle, Input, Module, Output, PrintableHelper, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.Decode.{INST_WIDTH, N_ARCH_REGISTERS}
-import io.riscy.stages.MemRWSize
+import io.riscy.stages.Decode.{INST_WIDTH, N_ARCH_REGISTERS}
 
 class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
   assert(instructionWidth == INST_WIDTH)

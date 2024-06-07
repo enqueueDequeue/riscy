@@ -3,6 +3,7 @@ package io.riscy.stages
 import chisel3.util.{Cat, Fill}
 import chisel3.{Bundle, Input, Module, Output, PrintableHelper, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.stages.Decode.{INST_WIDTH, N_ARCH_REGISTERS}
+import io.riscy.stages.signals.DecodeSignals
 
 class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
   assert(instructionWidth == INST_WIDTH)
@@ -10,7 +11,7 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
 
   val io = IO(new Bundle {
     val inst = Input(UInt(instructionWidth.W))
-    val signals = Output(new Signals(N_ARCH_REGISTERS, dataWidth))
+    val signals = Output(new DecodeSignals(N_ARCH_REGISTERS, dataWidth))
   })
 
   // the sign for all the instructions is always in the last bit

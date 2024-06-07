@@ -138,7 +138,7 @@ object Main {
 
       val readValue = 10L << 32
 
-      println("******** input: " + readValue + "********")
+      println("******** input: " + readValue + " ********")
 
       dut.io.dReadAddr.expect(8.U)
       dut.io.dReadLen.expect(4.U)
@@ -173,7 +173,7 @@ object Main {
       dut.clock.step()
     }
 
-    test(new InOrderCPU(), Seq(WriteVcdAnnotation)) { dut =>
+    test(new InOrderPipelinedCPU(), Seq(WriteVcdAnnotation)) { dut =>
       println("%%%%%%% Testing memory model %%%%%%%")
 
       val instructions = Seq(
@@ -182,14 +182,15 @@ object Main {
         0x00528293L, // ADDI x5, x5, 5
         0x00530333L, // ADD x6, x6, x5
         0xfff28293L, // ADDI x5, x5, -1
-        0xfe029ce3L, // BNE x5, x0, -8
+        0x00028463L, // BEQ x5, x0, 8
+        0xff5ff06fL, // JAL x0, -12
         0x0063a023L, // SW x6, 0(x7)
       )
 
       val memory = new Array[Byte](64)
 
       for (i <- memory.indices) {
-        memory(i) = i.toByte
+        memory(i) = 0.toByte
       }
 
       println(memory.mkString("memory: (", ", ", ")"))
@@ -252,7 +253,7 @@ object Main {
 
     println(
       ChiselStage.emitSystemVerilog(
-        gen = new InOrderCPU(),
+        gen = new InOrderPipelinedCPU(),
         firtoolOpts = Array("-disable-all-randomization")
       )
     )

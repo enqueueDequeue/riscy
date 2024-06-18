@@ -194,7 +194,7 @@ object Main {
         0x00028463L, // BEQ x5, x0, 8
         0xff5ff06fL, // JAL x0, -12
         0x0063a023L, // SW x6, 0(x7)
-//        // buffering a few instructions at the end
+        // buffering a few instructions at the end
         0x00000033L, // ADD x0, x0, x0
         0x00000033L, // ADD x0, x0, x0
         0x00000033L, // ADD x0, x0, x0

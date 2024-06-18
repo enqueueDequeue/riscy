@@ -26,7 +26,7 @@ class InOrderPipelinedCPU extends Module {
     val dWriteValue = Output(UInt(DATA_WIDTH.W))
   })
 
-  val fetchSignals = RegInit({
+  val ifIdSignals = RegInit({
     val initSignals = Wire(Stage(new Bundle {
       val fetch = FetchSignals()
     }))
@@ -35,7 +35,7 @@ class InOrderPipelinedCPU extends Module {
     initSignals
   })
 
-  val decodeSignals = RegInit({
+  val idRrSignals = RegInit({
     val initSignals = Wire(Stage(new Bundle {
       val fetch = FetchSignals()
       val decode = DecodeSignals()
@@ -46,7 +46,7 @@ class InOrderPipelinedCPU extends Module {
     initSignals
   })
 
-  val regReadSignals = RegInit({
+  val rrExSignals = RegInit({
     val initSignals = Wire(Stage(new Bundle {
       val fetch = FetchSignals()
       val decode = DecodeSignals()
@@ -59,7 +59,7 @@ class InOrderPipelinedCPU extends Module {
     initSignals
   })
 
-  val executeSignals = RegInit({
+  val exMemSignals = RegInit({
     val initSignals = Wire(Stage(new Bundle {
       val fetch = FetchSignals()
       val decode = DecodeSignals()
@@ -74,7 +74,7 @@ class InOrderPipelinedCPU extends Module {
     initSignals
   })
 
-  val memorySignals = RegInit({
+  val memWbSignals = RegInit({
     val initSignals = Wire(Stage(new Bundle {
       val fetch = FetchSignals()
       val decode = DecodeSignals()
@@ -134,14 +134,14 @@ class InOrderPipelinedCPU extends Module {
     when(!stall) {
       printf(cf"fetchSignals: valid: ${fetchSignalsWire.instruction.valid}%x, inst: ${fetchSignalsWire.instruction.bits}%x\n")
 
-      fetchSignals.pc := Mux(fetch.io.inst.valid, pc, PC_INIT.U)
-      fetchSignals.stage.fetch := fetchSignalsWire
+      ifIdSignals.pc := Mux(fetch.io.inst.valid, pc, PC_INIT.U)
+      ifIdSignals.stage.fetch := fetchSignalsWire
     }.otherwise {
       printf(cf"fetchSignals: valid: ${fetchSignalsWire.instruction.valid}%x, Stalling\n")
 
-      fetchSignals.pc := PC_INIT.U
-      fetchSignals.stage.fetch.instruction.valid := false.B
-      fetchSignals.stage.fetch.instruction.bits := NOP.U
+      ifIdSignals.pc := PC_INIT.U
+      ifIdSignals.stage.fetch.instruction.valid := false.B
+      ifIdSignals.stage.fetch.instruction.bits := NOP.U
     }
   }
 
@@ -149,31 +149,31 @@ class InOrderPipelinedCPU extends Module {
   {
     val decode = Module(new Decode(INST_WIDTH, DATA_WIDTH))
 
-    decode.io.inst := Mux(fetchSignals.stage.fetch.instruction.valid,
-                          fetchSignals.stage.fetch.instruction.bits, NOP.U)
+    decode.io.inst := Mux(ifIdSignals.stage.fetch.instruction.valid,
+                          ifIdSignals.stage.fetch.instruction.bits, NOP.U)
 
     decodeSignalsWire := decode.io.signals
 
     when(!stall) {
-      printf(cf"decodeInst: ${fetchSignals.stage.fetch.instruction.bits}%x decodeSignals: $decodeSignalsWire\n")
+      printf(cf"decodeInst: ${ifIdSignals.stage.fetch.instruction.bits}%x decodeSignals: $decodeSignalsWire\n")
 
-      decodeSignals.pc := fetchSignals.pc
-      decodeSignals.stage.fetch := fetchSignals.stage.fetch
-      decodeSignals.stage.decode := decodeSignalsWire
+      idRrSignals.pc := ifIdSignals.pc
+      idRrSignals.stage.fetch := ifIdSignals.stage.fetch
+      idRrSignals.stage.decode := decodeSignalsWire
     }.otherwise {
-      printf(cf"decodeInst: ${fetchSignals.stage.fetch.instruction.bits}%x Stalling\n")
+      printf(cf"decodeInst: ${ifIdSignals.stage.fetch.instruction.bits}%x Stalling\n")
 
       // let all the signals pass as it is
       // except for the ones that effect the state of the system
-      decodeSignals.pc := fetchSignals.pc
-      decodeSignals.stage.fetch := fetchSignals.stage.fetch
-      decodeSignals.stage.decode := decodeSignalsWire
+      idRrSignals.pc := ifIdSignals.pc
+      idRrSignals.stage.fetch := ifIdSignals.stage.fetch
+      idRrSignals.stage.decode := decodeSignalsWire
 
-      decodeSignals.stage.decode.memRead := MemRWSize.BYTES_NO
-      decodeSignals.stage.decode.memWrite := MemRWSize.BYTES_NO
-      decodeSignals.stage.decode.regWrite := false.B
-      decodeSignals.stage.decode.branch := false.B
-      decodeSignals.stage.decode.jump := false.B
+      idRrSignals.stage.decode.memRead := MemRWSize.BYTES_NO
+      idRrSignals.stage.decode.memWrite := MemRWSize.BYTES_NO
+      idRrSignals.stage.decode.regWrite := false.B
+      idRrSignals.stage.decode.branch := false.B
+      idRrSignals.stage.decode.jump := false.B
     }
   }
 
@@ -182,53 +182,53 @@ class InOrderPipelinedCPU extends Module {
     val stallRs1 = Wire(Bool())
     val stallRs2 = Wire(Bool())
 
-    phyRegs.io.rs1 := decodeSignals.stage.decode.rs1
-    phyRegs.io.rs2 := decodeSignals.stage.decode.rs2
+    phyRegs.io.rs1 := idRrSignals.stage.decode.rs1
+    phyRegs.io.rs2 := idRrSignals.stage.decode.rs2
 
-    printf(cf"rs1: ${decodeSignals.stage.decode.rs1} rs2: ${decodeSignals.stage.decode.rs2} rd: ${decodeSignals.stage.decode.rd}\n")
+    printf(cf"rs1: ${idRrSignals.stage.decode.rs1} rs2: ${idRrSignals.stage.decode.rs2} rd: ${idRrSignals.stage.decode.rd}\n")
 
     printf(cf"rs1:\n")
-    forward(decodeSignals.stage.decode.rs1,
+    forward(idRrSignals.stage.decode.rs1,
             phyRegs.io.rs1Value,
             executeSignalsWire, memorySignalsWire,
-            regReadSignals.stage.decode, executeSignals.stage.decode,
-            executeSignals.stage.execute,
+            rrExSignals.stage.decode, exMemSignals.stage.decode,
+            exMemSignals.stage.execute,
             regReadSignalsWire.rs1Value, stallRs1)
 
     printf(cf"rs2:\n")
-    forward(decodeSignals.stage.decode.rs2,
+    forward(idRrSignals.stage.decode.rs2,
             phyRegs.io.rs2Value,
             executeSignalsWire, memorySignalsWire,
-            regReadSignals.stage.decode, executeSignals.stage.decode,
-            executeSignals.stage.execute,
+            rrExSignals.stage.decode, exMemSignals.stage.decode,
+            exMemSignals.stage.execute,
             regReadSignalsWire.rs2Value, stallRs2)
 
     stall := stallRs1 | stallRs2
 
     // Writing to regReadSignals
-    // NOTE: NO write MUST be performed on regReadSignals before this point
+    // NOTE: writes *MUST NOT* be performed on regReadSignals before this point
     when(!stall) {
-      printf(cf"regReadInst: ${decodeSignals.stage.fetch.instruction.bits}%x regReadSignals: $regReadSignalsWire\n")
+      printf(cf"regReadInst: ${idRrSignals.stage.fetch.instruction.bits}%x regReadSignals: $regReadSignalsWire\n")
 
-      regReadSignals.pc := decodeSignals.pc
-      regReadSignals.stage.fetch := decodeSignals.stage.fetch
-      regReadSignals.stage.decode := decodeSignals.stage.decode
-      regReadSignals.stage.regRead := regReadSignalsWire
+      rrExSignals.pc := idRrSignals.pc
+      rrExSignals.stage.fetch := idRrSignals.stage.fetch
+      rrExSignals.stage.decode := idRrSignals.stage.decode
+      rrExSignals.stage.regRead := regReadSignalsWire
     }.otherwise {
-      printf(cf"regReadInst: ${decodeSignals.stage.fetch.instruction.bits}%x -> regReadSignals: Stalling\n")
+      printf(cf"regReadInst: ${idRrSignals.stage.fetch.instruction.bits}%x -> regReadSignals: Stalling\n")
 
       // passing stuff as it is except for a few changes
 
-      regReadSignals.pc := decodeSignals.pc
-      regReadSignals.stage.fetch := decodeSignals.stage.fetch
-      regReadSignals.stage.decode := decodeSignals.stage.decode
-      regReadSignals.stage.regRead := regReadSignalsWire
+      rrExSignals.pc := idRrSignals.pc
+      rrExSignals.stage.fetch := idRrSignals.stage.fetch
+      rrExSignals.stage.decode := idRrSignals.stage.decode
+      rrExSignals.stage.regRead := regReadSignalsWire
 
-      regReadSignals.stage.decode.memRead := MemRWSize.BYTES_NO
-      regReadSignals.stage.decode.memWrite := MemRWSize.BYTES_NO
-      regReadSignals.stage.decode.regWrite := false.B
-      regReadSignals.stage.decode.branch := false.B
-      regReadSignals.stage.decode.jump := false.B
+      rrExSignals.stage.decode.memRead := MemRWSize.BYTES_NO
+      rrExSignals.stage.decode.memWrite := MemRWSize.BYTES_NO
+      rrExSignals.stage.decode.regWrite := false.B
+      rrExSignals.stage.decode.branch := false.B
+      rrExSignals.stage.decode.jump := false.B
     }
   }
 
@@ -236,22 +236,22 @@ class InOrderPipelinedCPU extends Module {
   {
     val execute = Module(new Execute(DATA_WIDTH))
 
-    execute.io.op := regReadSignals.stage.decode.aluOp
-    execute.io.branchInvert := regReadSignals.stage.decode.branchInvert
+    execute.io.op := rrExSignals.stage.decode.aluOp
+    execute.io.branchInvert := rrExSignals.stage.decode.branchInvert
 
-    execute.io.a := Mux(regReadSignals.stage.decode.rs1Pc, regReadSignals.pc, regReadSignals.stage.regRead.rs1Value)
-    execute.io.b := Mux(regReadSignals.stage.decode.rs2Imm, regReadSignals.stage.decode.immediate, regReadSignals.stage.regRead.rs2Value)
+    execute.io.a := Mux(rrExSignals.stage.decode.rs1Pc, rrExSignals.pc, rrExSignals.stage.regRead.rs1Value)
+    execute.io.b := Mux(rrExSignals.stage.decode.rs2Imm, rrExSignals.stage.decode.immediate, rrExSignals.stage.regRead.rs2Value)
 
-    executeSignalsWire.result := Mux(regReadSignals.stage.decode.jump, regReadSignals.pc + 4.U, execute.io.result)
+    executeSignalsWire.result := Mux(rrExSignals.stage.decode.jump, rrExSignals.pc + 4.U, execute.io.result)
     executeSignalsWire.zero := execute.io.zero
 
-    printf(cf"executeInst: ${regReadSignals.stage.fetch.instruction.bits}%x executeSignals: $executeSignalsWire\n")
+    printf(cf"executeInst: ${rrExSignals.stage.fetch.instruction.bits}%x executeSignals: $executeSignalsWire\n")
 
-    executeSignals.pc := regReadSignals.pc
-    executeSignals.stage.fetch := regReadSignals.stage.fetch
-    executeSignals.stage.decode := regReadSignals.stage.decode
-    executeSignals.stage.regRead := regReadSignals.stage.regRead
-    executeSignals.stage.execute := executeSignalsWire
+    exMemSignals.pc := rrExSignals.pc
+    exMemSignals.stage.fetch := rrExSignals.stage.fetch
+    exMemSignals.stage.decode := rrExSignals.stage.decode
+    exMemSignals.stage.regRead := rrExSignals.stage.regRead
+    exMemSignals.stage.execute := executeSignalsWire
   }
 
   // memory
@@ -266,47 +266,47 @@ class InOrderPipelinedCPU extends Module {
     memory.io.dWriteAddr <> io.dWriteAddr
     memory.io.dWriteValue <> io.dWriteValue
 
-    memory.io.address := executeSignals.stage.execute.result
-    memory.io.writeData := executeSignals.stage.regRead.rs2Value
-    memory.io.writeSize := executeSignals.stage.decode.memWrite
-    memory.io.readSize := executeSignals.stage.decode.memRead
+    memory.io.address := exMemSignals.stage.execute.result
+    memory.io.writeData := exMemSignals.stage.regRead.rs2Value
+    memory.io.writeSize := exMemSignals.stage.decode.memWrite
+    memory.io.readSize := exMemSignals.stage.decode.memRead
 
     memorySignalsWire.readData := memory.io.readData
 
-    memorySignals.pc := executeSignals.pc
-    memorySignals.stage.fetch := executeSignals.stage.fetch
-    memorySignals.stage.decode := executeSignals.stage.decode
-    memorySignals.stage.regRead := executeSignals.stage.regRead
-    memorySignals.stage.execute := executeSignals.stage.execute
-    memorySignals.stage.memory := memorySignalsWire
+    memWbSignals.pc := exMemSignals.pc
+    memWbSignals.stage.fetch := exMemSignals.stage.fetch
+    memWbSignals.stage.decode := exMemSignals.stage.decode
+    memWbSignals.stage.regRead := exMemSignals.stage.regRead
+    memWbSignals.stage.execute := exMemSignals.stage.execute
+    memWbSignals.stage.memory := memorySignalsWire
 
-    printf(cf"memoryInst: ${executeSignals.stage.fetch.instruction.bits}%x memorySignals: $memorySignalsWire\n")
+    printf(cf"memoryInst: ${exMemSignals.stage.fetch.instruction.bits}%x memorySignals: $memorySignalsWire\n")
   }
 
   // write-back
   {
     val writeBack = Module(new WriteBack(DATA_WIDTH))
 
-    writeBack.io.memToReg := memorySignals.stage.decode.memToReg
-    writeBack.io.execResult := memorySignals.stage.execute.result
-    writeBack.io.readData := memorySignals.stage.memory.readData
+    writeBack.io.memToReg := memWbSignals.stage.decode.memToReg
+    writeBack.io.execResult := memWbSignals.stage.execute.result
+    writeBack.io.readData := memWbSignals.stage.memory.readData
 
-    phyRegs.io.rd := memorySignals.stage.decode.rd
-    phyRegs.io.rdEn := memorySignals.stage.decode.regWrite
+    phyRegs.io.rd := memWbSignals.stage.decode.rd
+    phyRegs.io.rdEn := memWbSignals.stage.decode.regWrite
     phyRegs.io.rdValue := writeBack.io.result
 
-    printf(cf"wbInst: ${memorySignals.stage.fetch.instruction.bits}%x wb: ${writeBack.io.result}%x\n")
+    printf(cf"wbInst: ${memWbSignals.stage.fetch.instruction.bits}%x wb: ${writeBack.io.result}%x\n")
   }
 
   // control
   // Always, check the signals that execute is working on
   // OR the memory stage is working on
-  when(regReadSignals.stage.decode.jump) {
+  when(rrExSignals.stage.decode.jump) {
     pc := executeSignalsWire.result
     // todo: kill the Execute, RegRead, Decode
     //  and Fetch stage instructions
-  }.elsewhen(executeSignalsWire.zero && regReadSignals.stage.decode.branch) {
-    pc := pc + regReadSignals.stage.decode.immediate
+  }.elsewhen(executeSignalsWire.zero && rrExSignals.stage.decode.branch) {
+    pc := pc + rrExSignals.stage.decode.immediate
     // todo: kill the Execute, RegRead, Decode
     //  and Fetch stage instructions
   }.elsewhen(fetchSignalsWire.instruction.valid) {

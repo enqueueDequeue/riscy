@@ -8,6 +8,9 @@ import io.riscy.stages.{ExecuteOp, MemRWSize}
 class DecodeSignals(nArchRegisters:Int, dataWidth: Int) extends Bundle {
   val jump = Bool()
   val branch = Bool()
+  // Actually, memToReg is true whenever
+  // memRead is not BYTES_NO
+  // this logic can be simplified
   val memToReg = Bool()
   val memRead = MemRWSize()
   val memWrite = MemRWSize()

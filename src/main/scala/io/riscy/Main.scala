@@ -24,6 +24,7 @@ object Main {
   }
 
   def main(args: Array[String]): Unit = {
+    /*
     test(new PhyRegs(128)) { dut =>
       dut.io.rdEn.poke(true.B)
 
@@ -172,11 +173,19 @@ object Main {
 
       dut.clock.step()
     }
+    */
 
     test(new InOrderPipelinedCPU(), Seq(WriteVcdAnnotation)) { dut =>
       println("%%%%%%% Testing memory model %%%%%%%")
 
       val instructions = Seq(
+//          0x00c00393L, // ADDI x7, x0, 12
+//          0x00000313L, // ADDI x6, x0, 0
+//          0x00528293L, // ADDI x5, x5, 5
+//          0x00530333L, // ADD x6, x6, x5
+//          0xfff28293L, // ADDI x5, x5, -1
+//          0x0063a023L, // SW x6, 0(x7)
+
         0x00c00393L, // ADDI x7, x0, 12
         0x00000313L, // ADDI x6, x0, 0
         0x00528293L, // ADDI x5, x5, 5
@@ -185,12 +194,19 @@ object Main {
         0x00028463L, // BEQ x5, x0, 8
         0xff5ff06fL, // JAL x0, -12
         0x0063a023L, // SW x6, 0(x7)
+//        // buffering a few instructions at the end
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
       )
 
       val memory = new Array[Byte](64)
 
       for (i <- memory.indices) {
-        memory(i) = 0.toByte
+        memory(i) = i.toByte
       }
 
       println(memory.mkString("memory: (", ", ", ")"))
@@ -251,11 +267,13 @@ object Main {
       println(memory.mkString("memory: (", ", ", ")"))
     }
 
+    /*
     println(
       ChiselStage.emitSystemVerilog(
         gen = new InOrderPipelinedCPU(),
         firtoolOpts = Array("-disable-all-randomization")
       )
     )
+    */
   }
 }

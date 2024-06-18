@@ -1,11 +1,16 @@
 package io.riscy
 
 import chisel3.util.Decoupled
-import chisel3.{Bundle, Data, DontCare, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.InOrderPipelinedCPU.{ADDR_WIDTH, ARCH_WIDTH, BIT_WIDTH, DATA_WIDTH, INST_WIDTH, NOP, N_ARCH_REGISTERS, PC_INIT, initDecodeSignals, initExecuteSignals, initFetchSignals, initMemorySignals, initRegReadSignals, initStage}
+import chisel3.{Bool, Bundle, Data, DontCare, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
+import io.riscy.InOrderPipelinedCPU.{ADDR_WIDTH, ARCH_WIDTH, BIT_WIDTH, DATA_WIDTH, INST_WIDTH, NOP, N_ARCH_REGISTERS, PC_INIT, forward, initDecodeSignals, initExecuteSignals, initFetchSignals, initMemorySignals, initRegReadSignals, initStage}
 import io.riscy.stages.signals._
 import io.riscy.stages._
 
+/**
+ * An InOrder 6 Stage Processor
+ *
+ * Fetch -> Decode -> Register Read -> Execute -> Memory -> WriteBack
+ */
 class InOrderPipelinedCPU extends Module {
 
   val io = IO(new Bundle {
@@ -32,19 +37,23 @@ class InOrderPipelinedCPU extends Module {
 
   val decodeSignals = RegInit({
     val initSignals = Wire(Stage(new Bundle {
+      val fetch = FetchSignals()
       val decode = DecodeSignals()
     }))
     initStage(initSignals)
+    initFetchSignals(initSignals.stage.fetch)
     initDecodeSignals(initSignals.stage.decode)
     initSignals
   })
 
   val regReadSignals = RegInit({
     val initSignals = Wire(Stage(new Bundle {
+      val fetch = FetchSignals()
       val decode = DecodeSignals()
       val regRead = RegReadSignals()
     }))
     initStage(initSignals)
+    initFetchSignals(initSignals.stage.fetch)
     initDecodeSignals(initSignals.stage.decode)
     initRegReadSignals(initSignals.stage.regRead)
     initSignals
@@ -52,11 +61,13 @@ class InOrderPipelinedCPU extends Module {
 
   val executeSignals = RegInit({
     val initSignals = Wire(Stage(new Bundle {
+      val fetch = FetchSignals()
       val decode = DecodeSignals()
       val regRead = RegReadSignals()
       val execute = ExecuteSignals()
     }))
     initStage(initSignals)
+    initFetchSignals(initSignals.stage.fetch)
     initDecodeSignals(initSignals.stage.decode)
     initRegReadSignals(initSignals.stage.regRead)
     initExecuteSignals(initSignals.stage.execute)
@@ -65,12 +76,14 @@ class InOrderPipelinedCPU extends Module {
 
   val memorySignals = RegInit({
     val initSignals = Wire(Stage(new Bundle {
+      val fetch = FetchSignals()
       val decode = DecodeSignals()
       val regRead = RegReadSignals()
       val execute = ExecuteSignals()
       val memory = MemorySignals()
     }))
     initStage(initSignals)
+    initFetchSignals(initSignals.stage.fetch)
     initDecodeSignals(initSignals.stage.decode)
     initRegReadSignals(initSignals.stage.regRead)
     initExecuteSignals(initSignals.stage.execute)
@@ -78,8 +91,16 @@ class InOrderPipelinedCPU extends Module {
     initSignals
   })
 
+  // Used to froward stuff
+  val fetchSignalsWire = Wire(FetchSignals())
+  val decodeSignalsWire = Wire(DecodeSignals())
+  val regReadSignalsWire = Wire(RegReadSignals())
+  val executeSignalsWire = Wire(ExecuteSignals())
+  val memorySignalsWire = Wire(MemorySignals())
+
+  // Indicates if the instruction needs to be stalled
+  val stall = Wire(Bool())
   val pc = RegInit(PC_INIT.U(ARCH_WIDTH.W))
-  val nextPc = pc + 4.U
 
   val phyRegs = Module(new PhyRegs(N_ARCH_REGISTERS))
 
@@ -90,10 +111,11 @@ class InOrderPipelinedCPU extends Module {
   assert(BIT_WIDTH == Memory.BIT_WIDTH)
   assert(INST_WIDTH == Defaults.INST_WIDTH)
 
+  stall := false.B
+
   // fetch
   {
     val fetch = Module(new Fetch(ADDR_WIDTH, INST_WIDTH))
-    val fetchSignalsWire = Wire(FetchSignals())
 
     fetch.io.iReadAddr <> io.iReadAddr
     fetch.io.iReadValue <> io.iReadValue
@@ -109,67 +131,124 @@ class InOrderPipelinedCPU extends Module {
       fetch.io.inst.nodeq()
     }
 
-    printf(cf"fetchSignals: $fetchSignalsWire\n")
+    when(!stall) {
+      printf(cf"fetchSignals: valid: ${fetchSignalsWire.instruction.valid}%x, inst: ${fetchSignalsWire.instruction.bits}%x\n")
 
-    fetchSignals.pc := Mux(fetch.io.inst.valid, pc, PC_INIT.U)
-    fetchSignals.stage.fetch := fetchSignalsWire
+      fetchSignals.pc := Mux(fetch.io.inst.valid, pc, PC_INIT.U)
+      fetchSignals.stage.fetch := fetchSignalsWire
+    }.otherwise {
+      printf(cf"fetchSignals: valid: ${fetchSignalsWire.instruction.valid}%x, Stalling\n")
+
+      fetchSignals.pc := PC_INIT.U
+      fetchSignals.stage.fetch.instruction.valid := false.B
+      fetchSignals.stage.fetch.instruction.bits := NOP.U
+    }
   }
 
   // decode
   {
     val decode = Module(new Decode(INST_WIDTH, DATA_WIDTH))
-    val decodeSignalsWire = Wire(DecodeSignals())
 
     decode.io.inst := Mux(fetchSignals.stage.fetch.instruction.valid,
                           fetchSignals.stage.fetch.instruction.bits, NOP.U)
 
     decodeSignalsWire := decode.io.signals
 
-    printf(cf"decodeSignals: $decodeSignalsWire\n")
+    when(!stall) {
+      printf(cf"decodeInst: ${fetchSignals.stage.fetch.instruction.bits}%x decodeSignals: $decodeSignalsWire\n")
 
-    decodeSignals.pc := fetchSignals.pc
-    decodeSignals.stage.decode := decodeSignalsWire
+      decodeSignals.pc := fetchSignals.pc
+      decodeSignals.stage.fetch := fetchSignals.stage.fetch
+      decodeSignals.stage.decode := decodeSignalsWire
+    }.otherwise {
+      printf(cf"decodeInst: ${fetchSignals.stage.fetch.instruction.bits}%x Stalling\n")
+
+      // let all the signals pass as it is
+      // except for the ones that effect the state of the system
+      decodeSignals.pc := fetchSignals.pc
+      decodeSignals.stage.fetch := fetchSignals.stage.fetch
+      decodeSignals.stage.decode := decodeSignalsWire
+
+      decodeSignals.stage.decode.memRead := MemRWSize.BYTES_NO
+      decodeSignals.stage.decode.memWrite := MemRWSize.BYTES_NO
+      decodeSignals.stage.decode.regWrite := false.B
+      decodeSignals.stage.decode.branch := false.B
+      decodeSignals.stage.decode.jump := false.B
+    }
   }
 
   // Register Read
   {
-    val regReadSignalsWire = Wire(RegReadSignals())
+    val stallRs1 = Wire(Bool())
+    val stallRs2 = Wire(Bool())
 
     phyRegs.io.rs1 := decodeSignals.stage.decode.rs1
     phyRegs.io.rs2 := decodeSignals.stage.decode.rs2
-    phyRegs.io.rd := decodeSignals.stage.decode.rd
-    phyRegs.io.rdEn := decodeSignals.stage.decode.regWrite
 
-    regReadSignalsWire.rs1Value := phyRegs.io.rs1Value
-    regReadSignalsWire.rs2Value := phyRegs.io.rs2Value
+    printf(cf"rs1: ${decodeSignals.stage.decode.rs1} rs2: ${decodeSignals.stage.decode.rs2} rd: ${decodeSignals.stage.decode.rd}\n")
 
-    printf(cf"regReadSignals: $regReadSignalsWire\n")
+    printf(cf"rs1:\n")
+    forward(decodeSignals.stage.decode.rs1,
+            phyRegs.io.rs1Value,
+            executeSignalsWire, memorySignalsWire,
+            regReadSignals.stage.decode, executeSignals.stage.decode,
+            executeSignals.stage.execute,
+            regReadSignalsWire.rs1Value, stallRs1)
 
-    regReadSignals.pc := decodeSignals.pc
-    regReadSignals.stage.decode := decodeSignals.stage.decode
-    regReadSignals.stage.regRead := regReadSignalsWire
+    printf(cf"rs2:\n")
+    forward(decodeSignals.stage.decode.rs2,
+            phyRegs.io.rs2Value,
+            executeSignalsWire, memorySignalsWire,
+            regReadSignals.stage.decode, executeSignals.stage.decode,
+            executeSignals.stage.execute,
+            regReadSignalsWire.rs2Value, stallRs2)
 
-    // todo: implement stalling
+    stall := stallRs1 | stallRs2
+
+    // Writing to regReadSignals
+    // NOTE: NO write MUST be performed on regReadSignals before this point
+    when(!stall) {
+      printf(cf"regReadInst: ${decodeSignals.stage.fetch.instruction.bits}%x regReadSignals: $regReadSignalsWire\n")
+
+      regReadSignals.pc := decodeSignals.pc
+      regReadSignals.stage.fetch := decodeSignals.stage.fetch
+      regReadSignals.stage.decode := decodeSignals.stage.decode
+      regReadSignals.stage.regRead := regReadSignalsWire
+    }.otherwise {
+      printf(cf"regReadInst: ${decodeSignals.stage.fetch.instruction.bits}%x -> regReadSignals: Stalling\n")
+
+      // passing stuff as it is except for a few changes
+
+      regReadSignals.pc := decodeSignals.pc
+      regReadSignals.stage.fetch := decodeSignals.stage.fetch
+      regReadSignals.stage.decode := decodeSignals.stage.decode
+      regReadSignals.stage.regRead := regReadSignalsWire
+
+      regReadSignals.stage.decode.memRead := MemRWSize.BYTES_NO
+      regReadSignals.stage.decode.memWrite := MemRWSize.BYTES_NO
+      regReadSignals.stage.decode.regWrite := false.B
+      regReadSignals.stage.decode.branch := false.B
+      regReadSignals.stage.decode.jump := false.B
+    }
   }
 
   // execute
   {
     val execute = Module(new Execute(DATA_WIDTH))
-    val executeSignalsWire = Wire(ExecuteSignals())
 
     execute.io.op := regReadSignals.stage.decode.aluOp
     execute.io.branchInvert := regReadSignals.stage.decode.branchInvert
 
-    // todo: implement forwarding
     execute.io.a := Mux(regReadSignals.stage.decode.rs1Pc, regReadSignals.pc, regReadSignals.stage.regRead.rs1Value)
     execute.io.b := Mux(regReadSignals.stage.decode.rs2Imm, regReadSignals.stage.decode.immediate, regReadSignals.stage.regRead.rs2Value)
 
-    executeSignalsWire.result := execute.io.result
+    executeSignalsWire.result := Mux(regReadSignals.stage.decode.jump, regReadSignals.pc + 4.U, execute.io.result)
     executeSignalsWire.zero := execute.io.zero
 
-    printf(cf"executeSignals: $executeSignalsWire\n")
+    printf(cf"executeInst: ${regReadSignals.stage.fetch.instruction.bits}%x executeSignals: $executeSignalsWire\n")
 
     executeSignals.pc := regReadSignals.pc
+    executeSignals.stage.fetch := regReadSignals.stage.fetch
     executeSignals.stage.decode := regReadSignals.stage.decode
     executeSignals.stage.regRead := regReadSignals.stage.regRead
     executeSignals.stage.execute := executeSignalsWire
@@ -187,20 +266,21 @@ class InOrderPipelinedCPU extends Module {
     memory.io.dWriteAddr <> io.dWriteAddr
     memory.io.dWriteValue <> io.dWriteValue
 
-    val memorySignalsWire = Wire(MemorySignals())
-
     memory.io.address := executeSignals.stage.execute.result
-    memory.io.writeData := phyRegs.io.rs2Value
+    memory.io.writeData := executeSignals.stage.regRead.rs2Value
     memory.io.writeSize := executeSignals.stage.decode.memWrite
     memory.io.readSize := executeSignals.stage.decode.memRead
 
     memorySignalsWire.readData := memory.io.readData
 
     memorySignals.pc := executeSignals.pc
+    memorySignals.stage.fetch := executeSignals.stage.fetch
     memorySignals.stage.decode := executeSignals.stage.decode
     memorySignals.stage.regRead := executeSignals.stage.regRead
     memorySignals.stage.execute := executeSignals.stage.execute
     memorySignals.stage.memory := memorySignalsWire
+
+    printf(cf"memoryInst: ${executeSignals.stage.fetch.instruction.bits}%x memorySignals: $memorySignalsWire\n")
   }
 
   // write-back
@@ -208,26 +288,29 @@ class InOrderPipelinedCPU extends Module {
     val writeBack = Module(new WriteBack(DATA_WIDTH))
 
     writeBack.io.memToReg := memorySignals.stage.decode.memToReg
-    writeBack.io.execResult := Mux(memorySignals.stage.decode.jump, nextPc, memorySignals.stage.execute.result)
+    writeBack.io.execResult := memorySignals.stage.execute.result
     writeBack.io.readData := memorySignals.stage.memory.readData
 
+    phyRegs.io.rd := memorySignals.stage.decode.rd
     phyRegs.io.rdEn := memorySignals.stage.decode.regWrite
     phyRegs.io.rdValue := writeBack.io.result
 
-    printf(cf"wb: ${writeBack.io.result}%x\n")
+    printf(cf"wbInst: ${memorySignals.stage.fetch.instruction.bits}%x wb: ${writeBack.io.result}%x\n")
   }
 
   // control
-  when(executeSignals.stage.decode.jump) {
-    pc := executeSignals.stage.execute.result
+  // Always, check the signals that execute is working on
+  // OR the memory stage is working on
+  when(regReadSignals.stage.decode.jump) {
+    pc := executeSignalsWire.result
     // todo: kill the Execute, RegRead, Decode
     //  and Fetch stage instructions
-  }.elsewhen(executeSignals.stage.execute.zero && executeSignals.stage.decode.branch) {
-    pc := pc + executeSignals.stage.decode.immediate
+  }.elsewhen(executeSignalsWire.zero && regReadSignals.stage.decode.branch) {
+    pc := pc + regReadSignals.stage.decode.immediate
     // todo: kill the Execute, RegRead, Decode
     //  and Fetch stage instructions
-  }.elsewhen(fetchSignals.stage.fetch.instruction.valid) {
-    pc := nextPc
+  }.elsewhen(fetchSignalsWire.instruction.valid) {
+    pc := pc + 4.U
   }
 }
 
@@ -283,5 +366,65 @@ object InOrderPipelinedCPU {
 
   private def initMemorySignals(memorySignals: MemorySignals) = {
     memorySignals.readData := 0.U
+  }
+
+  /**
+   * forward the values appropriately
+   * @param rs The source register whose value has to be forwarded
+   * @param executeSignalsWire The results of the current execute stage
+   * @param regReadSignalsDecode The register values of the regReadSignal's decode stage, this is what the execute stage is being fed in the current clock
+   * @param executeSignalsDecode The register values of executeSignal's decode stage, this is what the memory stage is being fed in the current clock
+   * @param executeSignals The register values of executeSignal's execute stage, this is also what the memory stage is being fed in the current clock
+   * @param out The contents which have to be forwarded
+   * @param stallOut The stall flag which has to be used
+   */
+  private def forward(rs: UInt,
+                      rsValue: UInt,
+                      executeSignalsWire: ExecuteSignals,
+                      memorySignalsWire: MemorySignals,
+                      regReadSignalsDecode: DecodeSignals,
+                      executeSignalsDecode: DecodeSignals,
+                      executeSignals: ExecuteSignals,
+                      out: UInt, stallOut: Bool): Unit = {
+
+    // if any of the future stages have computed the values of
+    // the source register, then forward it
+    when(0.U === rs) {
+      printf(cf"rs = 0\n")
+
+      out := 0.U
+      stallOut := false.B
+    }.elsewhen(regReadSignalsDecode.rd === rs) {
+      // if the regReadSignals is holding the value
+      // that means the execute is working on the instruction
+
+      printf(cf"rs: forwarding execute result\n")
+
+      // Using memToReg to stall an instruction
+      // In this architecture, the ALU is a
+      // single cycle stage. All the instructions in
+      // the ALU  will be performed within a clock
+      // So, the only possible way to stall an instruction
+      // is through memory instructions which cannot forward
+      // the results until the memory stage completes
+
+      out := executeSignalsWire.result
+
+      // stall whenever there's a memory read
+      stallOut := regReadSignalsDecode.memToReg
+    }.elsewhen(executeSignalsDecode.rd === rs) {
+      // if the executeSignals is holding the value
+      // that means the memory stage is working on the instruction
+
+      printf(cf"rs: forwarding memory result\n")
+
+      out := Mux(executeSignalsDecode.memToReg, memorySignalsWire.readData, executeSignals.result)
+      stallOut := false.B
+    }.otherwise {
+      printf(cf"rs: reading the register\n")
+
+      out := rsValue
+      stallOut := false.B
+    }
   }
 }

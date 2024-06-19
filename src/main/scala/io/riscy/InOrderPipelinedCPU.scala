@@ -111,6 +111,8 @@ class InOrderPipelinedCPU extends Module {
   assert(N_ARCH_REGISTERS == Decode.N_ARCH_REGISTERS)
   assert(BIT_WIDTH == Memory.BIT_WIDTH)
   assert(INST_WIDTH == Defaults.INST_WIDTH)
+  assert(ADDR_WIDTH == Defaults.ADDR_WIDTH)
+  assert(DATA_WIDTH == Defaults.DATA_WIDTH)
 
   stall := false.B
 
@@ -221,8 +223,8 @@ class InOrderPipelinedCPU extends Module {
 
     // In case of Jump instructions:
     // ALU calculates pc + imm. But, the results are always ignored
-    // by the following mux. The results are again computed in the control
-    // flow logic in the section below.
+    // by the following mux. The nextPc computed will be used to set the PC
+    executeSignalsWire.nextPc := rrExSignals.pc + rrExSignals.stage.decode.immediate
     executeSignalsWire.result := Mux(rrExSignals.stage.decode.jump, rrExSignals.pc + 4.U, execute.io.result)
     executeSignalsWire.zero := execute.io.zero
 
@@ -285,13 +287,14 @@ class InOrderPipelinedCPU extends Module {
   // Always, check the signals that execute is working on
   // OR the memory stage is working on
   when(rrExSignals.stage.decode.jump) {
-    pc := rrExSignals.pc + rrExSignals.stage.decode.immediate
+    // pc could be stored in executeSignalsWire
+    pc := executeSignalsWire.nextPc
 
     killFetchSignals(ifIdSignals.stage.fetch)
     killDecodeSignals(idRrSignals.stage.decode)
     killDecodeSignals(rrExSignals.stage.decode)
   }.elsewhen(executeSignalsWire.zero && rrExSignals.stage.decode.branch) {
-    pc := rrExSignals.pc + rrExSignals.stage.decode.immediate
+    pc := executeSignalsWire.nextPc
 
     killFetchSignals(ifIdSignals.stage.fetch)
     killDecodeSignals(idRrSignals.stage.decode)
@@ -347,6 +350,7 @@ object InOrderPipelinedCPU {
   }
 
   private def initExecuteSignals(executeSignals: ExecuteSignals) = {
+    executeSignals.nextPc := PC_INIT.U
     executeSignals.result := 0.U
     executeSignals.zero := false.B
   }

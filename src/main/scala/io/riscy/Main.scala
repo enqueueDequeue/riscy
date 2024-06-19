@@ -24,7 +24,6 @@ object Main {
   }
 
   def main(args: Array[String]): Unit = {
-    /*
     test(new PhyRegs(128)) { dut =>
       dut.io.rdEn.poke(true.B)
 
@@ -173,7 +172,6 @@ object Main {
 
       dut.clock.step()
     }
-    */
 
     test(new InOrderPipelinedCPU(), Seq(WriteVcdAnnotation)) { dut =>
       println("%%%%%%% Testing memory model %%%%%%%")
@@ -272,13 +270,11 @@ object Main {
       println(memory.mkString("memory: (", ", ", ")"))
     }
 
-    /*
     println(
       ChiselStage.emitSystemVerilog(
         gen = new InOrderPipelinedCPU(),
         firtoolOpts = Array("-disable-all-randomization")
       )
     )
-    */
   }
 }

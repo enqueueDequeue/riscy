@@ -186,7 +186,12 @@ object Main {
 //          0xfff28293L, // ADDI x5, x5, -1
 //          0x0063a023L, // SW x6, 0(x7)
 
-        0x00c00393L, // ADDI x7, x0, 12
+        0x00200393L, // ADDI x7, x0, 2
+        0x00702023L, // SW x7, 0(x0)
+        0x00002383L, // LW x7, 0(x0)
+        0x007383b3L, // ADD x7, x7, x7
+        0x007383b3L, // ADD x7, x7, x7
+        0x00c38393L, // ADDI x7, x7, 12
         0x00000313L, // ADDI x6, x0, 0
         0x00528293L, // ADDI x5, x5, 5
         0x00530333L, // ADD x6, x6, x5
@@ -206,7 +211,7 @@ object Main {
       val memory = new Array[Byte](64)
 
       for (i <- memory.indices) {
-        memory(i) = i.toByte
+        memory(i) = 0.toByte
       }
 
       println(memory.mkString("memory: (", ", ", ")"))

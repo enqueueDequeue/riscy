@@ -2,7 +2,7 @@ package io.riscy
 
 import chisel3.util.Decoupled
 import chisel3.{Bool, Bundle, Data, DontCare, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.InOrderPipelinedCPU.{ADDR_WIDTH, ARCH_WIDTH, BIT_WIDTH, DATA_WIDTH, INST_WIDTH, NOP, N_ARCH_REGISTERS, PC_INIT, forward, initDecodeSignals, initExecuteSignals, initFetchSignals, initMemorySignals, initRegReadSignals, initStage}
+import io.riscy.InOrderPipelinedCPU.{ADDR_WIDTH, ARCH_WIDTH, BIT_WIDTH, DATA_WIDTH, INST_WIDTH, NOP, N_ARCH_REGISTERS, PC_INIT, forward, initDecodeSignals, initExecuteSignals, initFetchSignals, initMemorySignals, initRegReadSignals, initStage, killDecodeSignals, killFetchSignals}
 import io.riscy.stages.signals._
 import io.riscy.stages._
 
@@ -97,6 +97,7 @@ class InOrderPipelinedCPU extends Module {
   val regReadSignalsWire = Wire(RegReadSignals())
   val executeSignalsWire = Wire(ExecuteSignals())
   val memorySignalsWire = Wire(MemorySignals())
+  val writeBackSignalsWire = Wire(WriteBackSignals())
 
   // Indicates if the instruction needs to be stalled
   val stall = Wire(Bool())
@@ -136,12 +137,6 @@ class InOrderPipelinedCPU extends Module {
 
       ifIdSignals.pc := Mux(fetch.io.inst.valid, pc, PC_INIT.U)
       ifIdSignals.stage.fetch := fetchSignalsWire
-    }.otherwise {
-      printf(cf"fetchSignals: valid: ${fetchSignalsWire.instruction.valid}%x, Stalling\n")
-
-      ifIdSignals.pc := PC_INIT.U
-      ifIdSignals.stage.fetch.instruction.valid := false.B
-      ifIdSignals.stage.fetch.instruction.bits := NOP.U
     }
   }
 
@@ -160,20 +155,6 @@ class InOrderPipelinedCPU extends Module {
       idRrSignals.pc := ifIdSignals.pc
       idRrSignals.stage.fetch := ifIdSignals.stage.fetch
       idRrSignals.stage.decode := decodeSignalsWire
-    }.otherwise {
-      printf(cf"decodeInst: ${ifIdSignals.stage.fetch.instruction.bits}%x Stalling\n")
-
-      // let all the signals pass as it is
-      // except for the ones that effect the state of the system
-      idRrSignals.pc := ifIdSignals.pc
-      idRrSignals.stage.fetch := ifIdSignals.stage.fetch
-      idRrSignals.stage.decode := decodeSignalsWire
-
-      idRrSignals.stage.decode.memRead := MemRWSize.BYTES_NO
-      idRrSignals.stage.decode.memWrite := MemRWSize.BYTES_NO
-      idRrSignals.stage.decode.regWrite := false.B
-      idRrSignals.stage.decode.branch := false.B
-      idRrSignals.stage.decode.jump := false.B
     }
   }
 
@@ -190,16 +171,16 @@ class InOrderPipelinedCPU extends Module {
     printf(cf"rs1:\n")
     forward(idRrSignals.stage.decode.rs1,
             phyRegs.io.rs1Value,
-            executeSignalsWire, memorySignalsWire,
-            rrExSignals.stage.decode, exMemSignals.stage.decode,
+            executeSignalsWire, memorySignalsWire, writeBackSignalsWire,
+            rrExSignals.stage.decode, exMemSignals.stage.decode, memWbSignals.stage.decode,
             exMemSignals.stage.execute,
             regReadSignalsWire.rs1Value, stallRs1)
 
     printf(cf"rs2:\n")
     forward(idRrSignals.stage.decode.rs2,
             phyRegs.io.rs2Value,
-            executeSignalsWire, memorySignalsWire,
-            rrExSignals.stage.decode, exMemSignals.stage.decode,
+            executeSignalsWire, memorySignalsWire, writeBackSignalsWire,
+            rrExSignals.stage.decode, exMemSignals.stage.decode, memWbSignals.stage.decode,
             exMemSignals.stage.execute,
             regReadSignalsWire.rs2Value, stallRs2)
 
@@ -224,11 +205,7 @@ class InOrderPipelinedCPU extends Module {
       rrExSignals.stage.decode := idRrSignals.stage.decode
       rrExSignals.stage.regRead := regReadSignalsWire
 
-      rrExSignals.stage.decode.memRead := MemRWSize.BYTES_NO
-      rrExSignals.stage.decode.memWrite := MemRWSize.BYTES_NO
-      rrExSignals.stage.decode.regWrite := false.B
-      rrExSignals.stage.decode.branch := false.B
-      rrExSignals.stage.decode.jump := false.B
+      killDecodeSignals(rrExSignals.stage.decode)
     }
   }
 
@@ -242,6 +219,10 @@ class InOrderPipelinedCPU extends Module {
     execute.io.a := Mux(rrExSignals.stage.decode.rs1Pc, rrExSignals.pc, rrExSignals.stage.regRead.rs1Value)
     execute.io.b := Mux(rrExSignals.stage.decode.rs2Imm, rrExSignals.stage.decode.immediate, rrExSignals.stage.regRead.rs2Value)
 
+    // In case of Jump instructions:
+    // ALU calculates pc + imm. But, the results are always ignored
+    // by the following mux. The results are again computed in the control
+    // flow logic in the section below.
     executeSignalsWire.result := Mux(rrExSignals.stage.decode.jump, rrExSignals.pc + 4.U, execute.io.result)
     executeSignalsWire.zero := execute.io.zero
 
@@ -291,6 +272,8 @@ class InOrderPipelinedCPU extends Module {
     writeBack.io.execResult := memWbSignals.stage.execute.result
     writeBack.io.readData := memWbSignals.stage.memory.readData
 
+    writeBackSignalsWire.result := writeBack.io.result
+
     phyRegs.io.rd := memWbSignals.stage.decode.rd
     phyRegs.io.rdEn := memWbSignals.stage.decode.regWrite
     phyRegs.io.rdValue := writeBack.io.result
@@ -302,14 +285,18 @@ class InOrderPipelinedCPU extends Module {
   // Always, check the signals that execute is working on
   // OR the memory stage is working on
   when(rrExSignals.stage.decode.jump) {
-    pc := executeSignalsWire.result
-    // todo: kill the Execute, RegRead, Decode
-    //  and Fetch stage instructions
+    pc := rrExSignals.pc + rrExSignals.stage.decode.immediate
+
+    killFetchSignals(ifIdSignals.stage.fetch)
+    killDecodeSignals(idRrSignals.stage.decode)
+    killDecodeSignals(rrExSignals.stage.decode)
   }.elsewhen(executeSignalsWire.zero && rrExSignals.stage.decode.branch) {
-    pc := pc + rrExSignals.stage.decode.immediate
-    // todo: kill the Execute, RegRead, Decode
-    //  and Fetch stage instructions
-  }.elsewhen(fetchSignalsWire.instruction.valid) {
+    pc := rrExSignals.pc + rrExSignals.stage.decode.immediate
+
+    killFetchSignals(ifIdSignals.stage.fetch)
+    killDecodeSignals(idRrSignals.stage.decode)
+    killDecodeSignals(rrExSignals.stage.decode)
+  }.elsewhen(fetchSignalsWire.instruction.valid && !stall) {
     pc := pc + 4.U
   }
 }
@@ -368,6 +355,20 @@ object InOrderPipelinedCPU {
     memorySignals.readData := 0.U
   }
 
+  private def killFetchSignals(fetchSignals: FetchSignals) = {
+    fetchSignals.instruction.valid := false.B
+    fetchSignals.instruction.bits := NOP.U
+  }
+
+  private def killDecodeSignals(decodeSignals: DecodeSignals) = {
+    decodeSignals.memRead := MemRWSize.BYTES_NO
+    decodeSignals.memWrite := MemRWSize.BYTES_NO
+    decodeSignals.regWrite := false.B
+    decodeSignals.branch := false.B
+    decodeSignals.jump := false.B
+    decodeSignals.rd := 0.U
+  }
+
   /**
    * forward the values appropriately
    * @param rs The source register whose value has to be forwarded
@@ -382,8 +383,10 @@ object InOrderPipelinedCPU {
                       rsValue: UInt,
                       executeSignalsWire: ExecuteSignals,
                       memorySignalsWire: MemorySignals,
+                      writeBackSignalsWire: WriteBackSignals,
                       regReadSignalsDecode: DecodeSignals,
                       executeSignalsDecode: DecodeSignals,
+                      memorySignalsDecode: DecodeSignals,
                       executeSignals: ExecuteSignals,
                       out: UInt, stallOut: Bool): Unit = {
 
@@ -416,9 +419,16 @@ object InOrderPipelinedCPU {
       // if the executeSignals is holding the value
       // that means the memory stage is working on the instruction
 
-      printf(cf"rs: forwarding memory result\n")
+      printf(cf"rs: forwarding memory stage's results: ${executeSignalsDecode.memToReg} ? (memory results) / (execute results)\n")
 
+      // this code is duplicate of the write-back stage
       out := Mux(executeSignalsDecode.memToReg, memorySignalsWire.readData, executeSignals.result)
+      stallOut := false.B
+    }.elsewhen(memorySignalsDecode.rd === rs) {
+      // if memorySignals is holding the value
+      // that means the write-back stage is working on the instruction
+
+      out := writeBackSignalsWire.result
       stallOut := false.B
     }.otherwise {
       printf(cf"rs: reading the register\n")

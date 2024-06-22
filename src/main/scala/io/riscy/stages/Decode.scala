@@ -33,6 +33,7 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
   io.signals.regWrite := false.B
   io.signals.branchInvert := false.B
   io.signals.immediate := immediateI
+  io.signals.word := true.B
 
   val rs1 = io.inst(19, 15)
   val rs2 = io.inst(24, 20)

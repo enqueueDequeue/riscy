@@ -216,6 +216,7 @@ class InOrderPipelinedCPU extends Module {
 
     execute.io.op := rrExSignals.stage.decode.aluOp
     execute.io.branchInvert := rrExSignals.stage.decode.branchInvert
+    execute.io.word := rrExSignals.stage.decode.word
 
     execute.io.a := Mux(rrExSignals.stage.decode.rs1Pc, rrExSignals.pc, rrExSignals.stage.regRead.rs1Value)
     execute.io.b := Mux(rrExSignals.stage.decode.rs2Imm, rrExSignals.stage.decode.immediate, rrExSignals.stage.regRead.rs2Value)
@@ -345,6 +346,7 @@ object InOrderPipelinedCPU {
     decodeSignals.rs1 := 0.U
     decodeSignals.rs2 := 0.U
     decodeSignals.rd := 0.U
+    decodeSignals.word := false.B
   }
 
   private def initRegReadSignals(regReadSignals: RegReadSignals) = {

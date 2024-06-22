@@ -74,6 +74,7 @@ class InOrderCPU extends Module {
   phyRegs.io.rdEn := decode.io.signals.regWrite
 
   // execute
+  execute.io.word := decode.io.signals.word
   execute.io.op := decode.io.signals.aluOp
   execute.io.branchInvert := decode.io.signals.branchInvert
   execute.io.a := Mux(decode.io.signals.rs1Pc, pc, phyRegs.io.rs1Value)

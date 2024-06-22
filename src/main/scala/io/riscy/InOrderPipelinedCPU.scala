@@ -1,10 +1,11 @@
 package io.riscy
 
 import chisel3.util.Decoupled
-import chisel3.{Bool, Bundle, Data, DontCare, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.InOrderPipelinedCPU.{ADDR_WIDTH, ARCH_WIDTH, BIT_WIDTH, DATA_WIDTH, INST_WIDTH, NOP, N_ARCH_REGISTERS, PC_INIT, forward, initDecodeSignals, initExecuteSignals, initFetchSignals, initMemorySignals, initRegReadSignals, initStage, killDecodeSignals, killFetchSignals}
-import io.riscy.stages.signals._
-import io.riscy.stages._
+import chisel3.{Bool, Bundle, Data, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
+import io.riscy.InOrderPipelinedCPU.{NOP, PC_INIT, forward, initDecodeSignals, initExecuteSignals, initFetchSignals, initMemorySignals, initRegReadSignals, initStage, killDecodeSignals, killFetchSignals}
+import io.riscy.stages.{Decode, Execute, ExecuteOp, Fetch, MemRWSize, Memory, PhyRegs, WriteBack}
+import io.riscy.stages.signals.{DecodeSignals, ExecuteSignals, FetchSignals, MemorySignals, RegReadSignals, Stage, WriteBackSignals}
+import io.riscy.stages.signals.Defaults.{ADDR_WIDTH, BIT_WIDTH, DATA_WIDTH, INST_WIDTH, N_ARCH_REGISTERS}
 
 /**
  * An InOrder 6 Stage Processor
@@ -101,18 +102,11 @@ class InOrderPipelinedCPU extends Module {
 
   // Indicates if the instruction needs to be stalled
   val stall = Wire(Bool())
-  val pc = RegInit(PC_INIT.U(ARCH_WIDTH.W))
+  val pc = RegInit(PC_INIT.U(ADDR_WIDTH.W))
 
   val phyRegs = Module(new PhyRegs(N_ARCH_REGISTERS))
 
   printf(cf"pc: $pc\n")
-
-  // checks
-  assert(N_ARCH_REGISTERS == Decode.N_ARCH_REGISTERS)
-  assert(BIT_WIDTH == Memory.BIT_WIDTH)
-  assert(INST_WIDTH == Defaults.INST_WIDTH)
-  assert(ADDR_WIDTH == Defaults.ADDR_WIDTH)
-  assert(DATA_WIDTH == Defaults.DATA_WIDTH)
 
   stall := false.B
 
@@ -312,15 +306,7 @@ object InOrderPipelinedCPU {
   // The magic NOP
   // Decode to find why this is the NOP
   val NOP = 0x33
-
   val PC_INIT = 0
-
-  val BIT_WIDTH = 8
-  val N_ARCH_REGISTERS = 32
-  val ARCH_WIDTH = 64
-  val ADDR_WIDTH = ARCH_WIDTH
-  val DATA_WIDTH = ARCH_WIDTH
-  val INST_WIDTH = 32
 
   private def initStage[T <: Data](stage: Stage[T]) = {
     stage.pc := PC_INIT.U

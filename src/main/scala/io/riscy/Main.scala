@@ -1,27 +1,15 @@
 package io.riscy
 
-import chisel3.{VecInit, fromBooleanToLiteral, fromIntToLiteral, fromLongToLiteral, fromStringToLiteral, when}
+import chisel3.{fromBooleanToLiteral, fromIntToLiteral, fromLongToLiteral, fromStringToLiteral}
 import chiseltest.RawTester.test
 import chiseltest.simulator.WriteVcdAnnotation
-import chiseltest.{testableBool, testableClock, testableData}
+import chiseltest.{VerilatorBackendAnnotation, testableBool, testableClock, testableData}
 import circt.stage.ChiselStage
 import io.riscy.stages.PhyRegs
 
 import scala.util.control.Breaks.{break, breakable}
 
 object Main {
-  class MockICache extends Cache(64, 32) {
-    io.read.ready := true.B
-    io.write.ready := true.B
-
-    val mockInstructions = VecInit(Seq.range(0, 1024, 1).map(a => a.U))
-
-    when(io.read.fire) {
-      io.readValue.enq(mockInstructions(io.read.bits(9, 0)))
-    }.otherwise {
-      io.readValue.noenq()
-    }
-  }
 
   def toInt(memory: Array[Byte]): Int = {
     var memValue: Int = 0
@@ -41,13 +29,31 @@ object Main {
     memValue
   }
 
-  def printMem(memory: Array[Byte]): Unit = {
-    val factor = 128
+  def toLong(memory: Array[Byte]): Long = {
+    var memValue: Long = 0
+
+    require(memory.length == 8)
+
+    for (idx <- 0 until 8) {
+      var value = memory(idx).toLong
+
+      value = value << 56
+      value = value >>> 56
+
+      memValue = memValue << 8
+      memValue = memValue | value
+    }
+
+    memValue
+  }
+
+  def printMem(memory: Array[Byte], wordLen: Int = 4, wordGen: Array[Byte] => Number = toInt): Unit = {
+    val factor = 256
 
     for (idxX <- memory.indices by factor) {
-      for (idxY <- 0 until factor by 4) {
+      for (idxY <- 0 until factor by wordLen) {
         val idx = idxX + idxY
-        val memValue = toInt(memory.slice(idx, idx + 4))
+        val memValue = wordGen(memory.slice(idx, idx + wordLen))
 
         print(s"$memValue,")
       }
@@ -303,8 +309,8 @@ object Main {
       require(toInt(memory.slice(20, 24)) == 15)
     }
 
-    test(new InOrderPipelinedCPU(), Seq(WriteVcdAnnotation)) { dut =>
-      println("%%%%%%% Testing Quick Sort %%%%%%%")
+    test(new InOrderPipelinedCPU(), Seq(VerilatorBackendAnnotation, WriteVcdAnnotation)) { dut =>
+      println("%%%%%%% Testing Quick Sort: RV32 %%%%%%%")
 
       val instructions = Seq(
         // set return address to out of bounds
@@ -486,13 +492,194 @@ object Main {
       require(toInt(memory.slice(980,   984)) == 0)
     }
 
-    /*
+    test(new InOrderPipelinedCPU(), Seq(VerilatorBackendAnnotation, WriteVcdAnnotation)) { dut =>
+      println("%%%%%%% Testing Quick Sort: RV64 %%%%%%%")
+
+      val instructions = Seq(
+        // set return address to out of bounds
+        0x40000093L,
+        // update stack size = 4096
+        0x40000113L,
+        0x40010113L,
+        0x40010113L,
+        0x40010113L,
+        // actual instructions
+        0xfa010113L,
+        0x04113c23L,
+        0x00100513L,
+        0x00a13423L,
+        0x00700513L,
+        0x00a13823L,
+        0x00600513L,
+        0x00a13c23L,
+        0x00500513L,
+        0x02a13023L,
+        0x00900513L,
+        0x02a13423L,
+        0x00400513L,
+        0x02a13823L,
+        0x02013c23L,
+        0x00200513L,
+        0x04a13023L,
+        0x00300513L,
+        0x04a13423L,
+        0x00800513L,
+        0x04a13823L,
+        0x00900593L,
+        0x00810613L,
+        0x00000513L,
+        0x010000efL,
+        0x05813083L,
+        0x06010113L,
+        0x00008067L,
+        0xfd010113L,
+        0x02113423L,
+        0x02813023L,
+        0x00913c23L,
+        0x01213823L,
+        0x01313423L,
+        0x00060993L,
+        0x00058913L,
+        0x00359413L,
+        0x00c40433L,
+        0x02c0006fL,
+        0x00349593L,
+        0x013585b3L,
+        0x00043603L,
+        0x0005b683L,
+        0x00c5b023L,
+        0x00d43023L,
+        0xfff4859bL,
+        0x00098613L,
+        0xfb5ff0efL,
+        0x00048513L,
+        0x05255263L,
+        0x00043583L,
+        0x00351613L,
+        0x01360633L,
+        0x00050493L,
+        0x00c0006fL,
+        0x00860613L,
+        0xfa860ee3L,
+        0x00063683L,
+        0xfed5cae3L,
+        0x00349713L,
+        0x01370733L,
+        0x00073783L,
+        0x00d73023L,
+        0x00f63023L,
+        0x0014849bL,
+        0xfd9ff06fL,
+        0x02813083L,
+        0x02013403L,
+        0x01813483L,
+        0x01013903L,
+        0x00813983L,
+        0x03010113L,
+        0x00008067L,
+        // buffering a few instructions at the end
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+      )
+
+      // if memory size is changed
+      // change the first instruction of the
+      // instruction sequence
+      val memory = new Array[Byte](4096)
+
+      for (i <- memory.indices) {
+        memory(i) = 0.toByte
+      }
+
+      println(memory.mkString("memory: (", ", ", ")"))
+
+      dut.io.iReadAddr.ready.poke(true.B)
+
+      var instructionsExecuted = 0
+      breakable {
+        while (true) {
+          dut.io.iReadAddr.valid.expect(true.B)
+
+          val inst_idx = dut.io.iReadAddr.bits.peek().litValue.toInt / 4
+
+          if (inst_idx >= instructions.length) {
+            break
+          }
+
+          println("%%%%%%% executed: " + instructionsExecuted + " %%%%%%%")
+
+          instructionsExecuted += 1
+
+          println("%%%%%%% executing inst_idx: " + inst_idx + ": 0x" + instructions(inst_idx).toHexString + " %%%%%%%")
+
+          dut.io.iReadValue.valid.poke(true.B)
+          dut.io.iReadValue.bits.poke(instructions(inst_idx).asUInt)
+          dut.io.iReadValue.ready.expect(true.B)
+
+          var readValue = 0L
+          val readAddr = dut.io.dReadAddr.peek().litValue.toInt
+          val readLen = dut.io.dReadLen.peek().litValue.toInt
+
+          println(s"address: 0x${readAddr.toHexString}, len: $readLen")
+
+          for (readOffset <- 0 until readLen) {
+            var memValue = memory(readAddr + readOffset).toInt
+
+            memValue = (memValue << 24) >>> 24
+
+            readValue = readValue << 8
+            readValue = readValue | memValue
+          }
+
+          printMem(memory, 8, toLong)
+
+          println(s"readValue: 0x${readValue.toHexString}")
+
+          readValue = readValue << (64 - 8 * readLen)
+
+          dut.io.dReadValue.poke(s"x${readValue.toHexString}".U)
+
+          val writeAddr = dut.io.dWriteAddr.peek().litValue.toInt
+          val writeLen = dut.io.dWriteLen.peek().litValue.toInt
+          var writeData = dut.io.dWriteValue.peek().litValue.toLong
+
+          println(s"writeData: 0x${writeData.toHexString}, writeAddr: 0x${writeAddr.toHexString}, writeLen: $writeLen")
+
+          for (writeOffset <- 0 until writeLen) {
+            memory(writeAddr + writeLen - writeOffset - 1) = (writeData & 0xFF).toByte
+            writeData = writeData >>> 8
+          }
+
+          dut.clock.step()
+        }
+      }
+
+      println(s"%%%%%%% completed, instructions executed: $instructionsExecuted %%%%%%%")
+      println(memory.mkString("memory: (", ", ", ")"))
+
+      printMem(memory, 8, toLong)
+
+      require(toLong(memory.slice(4080, 4088)) == 9)
+      require(toLong(memory.slice(4072, 4080)) == 8)
+      require(toLong(memory.slice(4064, 4072)) == 7)
+      require(toLong(memory.slice(4056, 4064)) == 6)
+      require(toLong(memory.slice(4048, 4056)) == 5)
+      require(toLong(memory.slice(4040, 4048)) == 4)
+      require(toLong(memory.slice(4032, 4040)) == 3)
+      require(toLong(memory.slice(4024, 4032)) == 2)
+      require(toLong(memory.slice(4016, 4024)) == 1)
+      require(toLong(memory.slice(4008, 4016)) == 0)
+    }
+
     println(
       ChiselStage.emitSystemVerilog(
         gen = new InOrderPipelinedCPU(),
         firtoolOpts = Array("-disable-all-randomization")
       )
     )
-    */
   }
 }

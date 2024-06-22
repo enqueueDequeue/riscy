@@ -1,9 +1,9 @@
 package io.riscy.stages
 
 import chisel3.util.{Cat, Fill}
-import chisel3.{Bundle, Input, Module, Output, PrintableHelper, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.stages.Decode.{INST_WIDTH, N_ARCH_REGISTERS}
+import chisel3.{Bundle, Input, Module, Mux, Output, PrintableHelper, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.stages.signals.DecodeSignals
+import io.riscy.stages.signals.Defaults.{INST_WIDTH, N_ARCH_REGISTERS}
 
 class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
   assert(instructionWidth == INST_WIDTH)
@@ -15,13 +15,15 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
   })
 
   // the sign for all the instructions is always in the last bit
-  val boostedSign = Fill(dataWidth, io.inst(31))
+  val mask0 = Fill(dataWidth, 0.U(1.W))
+  val mask1 = Fill(dataWidth, 1.U(1.W))
+  val sign = Mux(io.inst(31) === 0.U, mask0, mask1)
 
-  val immediateI = Cat(boostedSign, io.inst(31, 20))(dataWidth - 1, 0)
-  val immediateS = Cat(boostedSign, io.inst(31, 25), io.inst(11, 7))(dataWidth - 1, 0)
-  val immediateSB = Cat(boostedSign, io.inst(31), io.inst(7), io.inst(30, 25), io.inst(11, 8), 0.U(1.W))(dataWidth - 1, 0)
-  val immediateU = Cat(boostedSign, io.inst(31, 12), 0.U(12.W))(dataWidth - 1, 0)
-  val immediateUJ = Cat(boostedSign, io.inst(31), io.inst(19, 12), io.inst(20), io.inst(30, 21), 0.U(1.W))(dataWidth - 1, 0)
+  val immediateI = Cat(sign, io.inst(31, 20))(dataWidth - 1, 0)
+  val immediateS = Cat(sign, io.inst(31, 25), io.inst(11, 7))(dataWidth - 1, 0)
+  val immediateSB = Cat(sign, io.inst(31), io.inst(7), io.inst(30, 25), io.inst(11, 8), 0.U(1.W))(dataWidth - 1, 0)
+  val immediateU = Cat(sign, io.inst(31, 12), 0.U(12.W))(dataWidth - 1, 0)
+  val immediateUJ = Cat(sign, io.inst(31), io.inst(19, 12), io.inst(20), io.inst(30, 21), 0.U(1.W))(dataWidth - 1, 0)
 
   io.signals.jump := false.B
   io.signals.branch := false.B
@@ -33,7 +35,7 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
   io.signals.regWrite := false.B
   io.signals.branchInvert := false.B
   io.signals.immediate := immediateI
-  io.signals.word := true.B
+  io.signals.word := false.B
 
   val rs1 = io.inst(19, 15)
   val rs2 = io.inst(24, 20)
@@ -286,6 +288,72 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
 
     io.signals.aluOp := ExecuteOp.NOP
     // todo: end
+  }.elsewhen(OpCode.ADDIW === io.inst) {
+    printf(cf"inst: ADDIW\n")
+
+    io.signals.aluOp := ExecuteOp.ADD
+    io.signals.regWrite := true.B
+    io.signals.rs2Imm := true.B
+    io.signals.word := true.B
+  }.elsewhen(OpCode.ADDW === io.inst) {
+    printf(cf"inst: ADDW\n")
+
+    io.signals.aluOp := ExecuteOp.ADD
+    io.signals.regWrite := true.B
+    io.signals.word := true.B
+  }.elsewhen(OpCode.LWU === io.inst) {
+    printf(cf"inst: LWU\n")
+
+    io.signals.aluOp := ExecuteOp.ADD
+    io.signals.memRead := MemRWSize.BYTES_4U
+    io.signals.memToReg := true.B
+    io.signals.regWrite := true.B
+    io.signals.rs2Imm := true.B
+  }.elsewhen(OpCode.SLLIW === io.inst) {
+    printf(cf"inst: SLLIW\n")
+
+    io.signals.aluOp := ExecuteOp.SLL
+    io.signals.regWrite := true.B
+    io.signals.rs2Imm := true.B
+    io.signals.word := true.B
+  }.elsewhen(OpCode.SLLW === io.inst) {
+    printf(cf"inst: SLLW\n")
+
+    io.signals.aluOp := ExecuteOp.SLL
+    io.signals.regWrite := true.B
+    io.signals.word := true.B
+  }.elsewhen(OpCode.SRAIW === io.inst) {
+    printf(cf"inst: SRAIW\n")
+
+    io.signals.aluOp := ExecuteOp.SRA
+    io.signals.regWrite := true.B
+    io.signals.rs2Imm := true.B
+    io.signals.word := true.B
+  }.elsewhen(OpCode.SRAW === io.inst) {
+    printf(cf"inst: SRAW\n")
+
+    io.signals.aluOp := ExecuteOp.SRA
+    io.signals.regWrite := true.B
+    io.signals.word := true.B
+  }.elsewhen(OpCode.SRLIW === io.inst) {
+    printf(cf"inst: SRLIW\n")
+
+    io.signals.aluOp := ExecuteOp.SRL
+    io.signals.regWrite := true.B
+    io.signals.rs2Imm := true.B
+    io.signals.word := true.B
+  }.elsewhen(OpCode.SRLW === io.inst) {
+    printf(cf"inst: SRLW\n")
+
+    io.signals.aluOp := ExecuteOp.SRL
+    io.signals.regWrite := true.B
+    io.signals.word := true.B
+  }.elsewhen(OpCode.SUBW === io.inst) {
+    printf(cf"inst: SUBW\n")
+
+    io.signals.aluOp := ExecuteOp.SUB
+    io.signals.regWrite := true.B
+    io.signals.word := true.B
   }.elsewhen(OpCode.SLLI === io.inst) {
     printf(cf"inst: SLLI\n")
 
@@ -298,6 +366,27 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
     io.signals.aluOp := ExecuteOp.SRL
     io.signals.regWrite := true.B
     io.signals.rs2Imm := true.B
+  }.elsewhen(OpCode.SRAI === io.inst) {
+    printf(cf"inst: SRAI\n")
+
+    io.signals.aluOp := ExecuteOp.SRA
+    io.signals.regWrite := true.B
+    io.signals.rs2Imm := true.B
+  }.elsewhen(OpCode.LD === io.inst) {
+    printf(cf"inst: LD\n")
+
+    io.signals.aluOp := ExecuteOp.ADD
+    io.signals.memRead := MemRWSize.BYTES_8S
+    io.signals.memToReg := true.B
+    io.signals.regWrite := true.B
+    io.signals.rs2Imm := true.B
+  }.elsewhen(OpCode.SD === io.inst) {
+    printf(cf"inst: SD\n")
+
+    io.signals.aluOp := ExecuteOp.ADD
+    io.signals.memWrite := MemRWSize.BYTES_8U
+    io.signals.rs2Imm := true.B
+    io.signals.immediate := immediateS
   }.otherwise {
     printf(cf"inst: ** Illegal OpCode: Inst: 0x${io.inst}%x **\n")
 
@@ -305,9 +394,4 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
   }
 
   chisel3.assert(io.signals.aluOp =/= ExecuteOp.UNKNOWN, cf"Illegal Op: ${io.inst}%x")
-}
-
-object Decode {
-  val INST_WIDTH = 32
-  val N_ARCH_REGISTERS = 32
 }

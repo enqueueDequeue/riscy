@@ -48,10 +48,6 @@ class InOrderCPU extends Module {
 
   val fetchedInst = Wire(UInt(INST_WIDTH.W))
 
-  // checks
-  assert(N_ARCH_REGISTERS == Decode.N_ARCH_REGISTERS)
-  assert(BIT_WIDTH == Memory.BIT_WIDTH)
-
   // setup
   memory.io.dReadLen <> io.dReadLen
   memory.io.dReadAddr <> io.dReadAddr

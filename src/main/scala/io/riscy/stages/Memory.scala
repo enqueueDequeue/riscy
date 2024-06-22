@@ -2,8 +2,9 @@ package io.riscy.stages
 
 import chisel3.util.{Cat, Fill, MuxLookup}
 import chisel3.{Bool, Bundle, Input, Module, Mux, Output, PrintableHelper, UInt, fromIntToLiteral, fromIntToWidth, printf}
-import io.riscy.stages.Memory.{BIT_WIDTH, getSizeBytes, getSizeBytesLit, isSigned}
+import io.riscy.stages.Memory.{getSizeBytes, getSizeBytesLit, isSigned}
 import io.riscy.stages.MemRWSize
+import io.riscy.stages.signals.Defaults.BIT_WIDTH
 
 class Memory(addressWidth: Int, dataWidth: Int) extends Module {
   assert(dataWidth <= 8 * BIT_WIDTH)
@@ -57,8 +58,6 @@ class Memory(addressWidth: Int, dataWidth: Int) extends Module {
 }
 
 object Memory {
-  val BIT_WIDTH = 8
-
   def getSizeBytesLit(size: MemRWSize.Type): Int = {
     size.litValue.toInt >> 1
   }

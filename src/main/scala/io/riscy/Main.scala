@@ -1,6 +1,6 @@
 package io.riscy
 
-import chisel3.{VecInit, fromBooleanToLiteral, fromIntToLiteral, fromLongToLiteral, when}
+import chisel3.{VecInit, fromBooleanToLiteral, fromIntToLiteral, fromLongToLiteral, fromStringToLiteral, when}
 import chiseltest.RawTester.test
 import chiseltest.simulator.WriteVcdAnnotation
 import chiseltest.{testableBool, testableClock, testableData}
@@ -24,6 +24,7 @@ object Main {
   }
 
   def main(args: Array[String]): Unit = {
+    /*
     test(new PhyRegs(128)) { dut =>
       dut.io.rdEn.poke(true.B)
 
@@ -268,6 +269,273 @@ object Main {
 
       println(s"%%%%%%% completed, instructions executed: $instructionsExecuted %%%%%%%")
       println(memory.mkString("memory: (", ", ", ")"))
+    }
+    */
+
+    /*
+    test(new InOrderPipelinedCPU(), Seq(WriteVcdAnnotation)) { dut =>
+      println("%%%%%%% Testing memory model %%%%%%%")
+
+      val instructions = Seq(
+        0x00200513L, // ADDI x10, x0, 2
+        0x00400593L, // ADDI x11, x0, 4
+        0x00a02023L, // SW x10, 0(x0)
+        0x00b02223L, // SW x11, 4(x0)
+        0x00002303L, // LW x6, 0(x0)
+        0x00402383L, // LW x7, 4(x0)
+        0x00702023L, // SW x7, 0(x0)
+        0x00602223L, // SW x6, 4(x0)
+        // buffering a few instructions at the end
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+      )
+
+      val memory = new Array[Byte](64)
+
+      for (i <- memory.indices) {
+        memory(i) = 0.toByte
+      }
+
+      println(memory.mkString("memory: (", ", ", ")"))
+
+      dut.io.iReadAddr.ready.poke(true.B)
+
+      var instructionsExecuted = 0
+      breakable {
+        while (true) {
+          dut.io.iReadAddr.valid.expect(true.B)
+
+          val inst_idx = dut.io.iReadAddr.bits.peek().litValue.toInt / 4
+
+          if (inst_idx >= instructions.length) {
+            break
+          }
+
+          instructionsExecuted += 1
+
+          println("%%%%%%% executing inst_idx: " + inst_idx + " %%%%%%%")
+
+          dut.io.iReadValue.valid.poke(true.B)
+          dut.io.iReadValue.bits.poke(instructions(inst_idx).asUInt)
+          dut.io.iReadValue.ready.expect(true.B)
+
+          var readValue = 0L
+          val readAddr = dut.io.dReadAddr.peek().litValue.toInt
+          val readLen = dut.io.dReadLen.peek().litValue.toInt
+
+          for (readOffset <- 0 until readLen) {
+            readValue = readValue << 8
+            readValue = readValue | memory(readAddr + readOffset)
+          }
+
+          println(s"address: 0x${readAddr.toHexString}")
+          println(s"readValue: 0x${readValue.toHexString}")
+
+          readValue = readValue << (64 - 8 * readLen)
+
+          dut.io.dReadValue.poke(readValue.U)
+
+          val writeAddr = dut.io.dWriteAddr.peek().litValue.toInt
+          val writeLen = dut.io.dWriteLen.peek().litValue.toInt
+          var writeData = dut.io.dWriteValue.peek().litValue.toLong
+
+          println(s"writeData: 0x${writeData.toHexString}")
+
+          for (writeOffset <- 0 until writeLen) {
+            memory(writeAddr + writeLen - writeOffset - 1) = (writeData & 0xFF).toByte
+            writeData = writeData >> 8
+          }
+
+          dut.clock.step()
+        }
+      }
+
+      println(s"%%%%%%% completed, instructions executed: $instructionsExecuted %%%%%%%")
+      println(memory.mkString("memory: (", ", ", ")"))
+    }
+    */
+
+    test(new InOrderPipelinedCPU(), Seq(WriteVcdAnnotation)) { dut =>
+      println("%%%%%%% Testing Quick Sort %%%%%%%")
+
+      val instructions = Seq(
+        // set return address to out of bounds
+        0x40000093L,
+        // update stack size = 1024
+        0x40000113L,
+        // actual instructions
+        0xfd010113L,
+        0x02112623L,
+        0x00100513L,
+        0x00a12223L,
+        0x00700513L,
+        0x00a12423L,
+        0x00600513L,
+        0x00a12623L,
+        0x00500513L,
+        0x00a12823L,
+        0x00900513L,
+        0x00a12a23L,
+        0x00400513L,
+        0x00a12c23L,
+        0x00300513L,
+        0x00a12e23L,
+        0x00200513L,
+        0x02a12023L,
+        0x02012223L,
+        0x00800513L,
+        0x02a12423L,
+        0x00900593L,
+        0x00410613L,
+        0x00000513L,
+        0x010000efL,
+        0x02c12083L,
+        0x03010113L,
+        0x00008067L,
+        0xfe010113L,
+        0x00112e23L,
+        0x00812c23L,
+        0x00912a23L,
+        0x01212823L,
+        0x01312623L,
+        0x01412423L,
+        0x00060a13L,
+        0x00058913L,
+        0x00259993L,
+        0x00c989b3L,
+        0x02c0006fL,
+        0x00249593L,
+        0x014585b3L,
+        0x0009a603L,
+        0x0005a683L,
+        0x00c5a023L,
+        0x00d9a023L,
+        0xfff48593L,
+        0x000a0613L,
+        0xfb1ff0efL,
+        0x00048513L,
+        0x05255663L,
+        0x0009a583L,
+        0x40a90633L,
+        0x00251693L,
+        0x014686b3L,
+        0x00050493L,
+        0x0100006fL,
+        0xfff60613L,
+        0x00468693L,
+        0xfa060ae3L,
+        0x0006a703L,
+        0xfee5c8e3L,
+        0x00249793L,
+        0x014787b3L,
+        0x0007a403L,
+        0x00e7a023L,
+        0x0086a023L,
+        0x00148493L,
+        0xfd5ff06fL,
+        0x01c12083L,
+        0x01812403L,
+        0x01412483L,
+        0x01012903L,
+        0x00c12983L,
+        0x00812a03L,
+        0x02010113L,
+        0x00008067L,
+        // buffering a few instructions at the end
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+        0x00000033L, // ADD x0, x0, x0
+      )
+
+      // if memory size is changed
+      // change the first instruction of the
+      // instruction sequence
+      val memory = new Array[Byte](1024)
+
+      for (i <- memory.indices) {
+        memory(i) = 0.toByte
+      }
+
+      println(memory.mkString("memory: (", ", ", ")"))
+
+      dut.io.iReadAddr.ready.poke(true.B)
+
+      var instructionsExecuted = 0
+      breakable {
+        while (true) {
+          dut.io.iReadAddr.valid.expect(true.B)
+
+          val inst_idx = dut.io.iReadAddr.bits.peek().litValue.toInt / 4
+
+          if (inst_idx >= instructions.length) {
+            break
+          }
+
+          println("%%%%%%% executed: " + instructionsExecuted + " %%%%%%%")
+
+          instructionsExecuted += 1
+
+          println("%%%%%%% executing inst_idx: " + inst_idx + ": 0x" + instructions(inst_idx).toHexString + " %%%%%%%")
+
+          dut.io.iReadValue.valid.poke(true.B)
+          dut.io.iReadValue.bits.poke(instructions(inst_idx).asUInt)
+          dut.io.iReadValue.ready.expect(true.B)
+
+          var readValue = 0L
+          val readAddr = dut.io.dReadAddr.peek().litValue.toInt
+          val readLen = dut.io.dReadLen.peek().litValue.toInt
+
+          for (readOffset <- 0 until readLen) {
+            readValue = readValue << 8
+            readValue = readValue | memory(readAddr + readOffset)
+          }
+
+          println(s"address: 0x${readAddr.toHexString}")
+          println(s"readValue: 0x${readValue.toHexString}")
+
+          readValue = readValue << (64 - 8 * readLen)
+
+          dut.io.dReadValue.poke(s"x${readValue.toHexString}".U)
+
+          val writeAddr = dut.io.dWriteAddr.peek().litValue.toInt
+          val writeLen = dut.io.dWriteLen.peek().litValue.toInt
+          var writeData = dut.io.dWriteValue.peek().litValue.toLong
+
+          println(s"writeData: 0x${writeData.toHexString}, writeAddr: 0x${writeAddr.toHexString}, writeLen: $writeLen")
+
+          for (writeOffset <- 0 until writeLen) {
+            memory(writeAddr + writeLen - writeOffset - 1) = (writeData & 0xFF).toByte
+            writeData = writeData >> 8
+          }
+
+          dut.clock.step()
+        }
+      }
+
+      println(s"%%%%%%% completed, instructions executed: $instructionsExecuted %%%%%%%")
+      println(memory.mkString("memory: (", ", ", ")"))
+
+      for (idx <- memory.indices by 4) {
+        var memValue = 0
+
+        memValue = memValue | memory(idx)
+        memValue = memValue << 8
+        memValue = memValue | memory(idx + 1)
+        memValue = memValue << 8
+        memValue = memValue | memory(idx + 2)
+        memValue = memValue << 8
+        memValue = memValue | memory(idx + 3)
+
+        print(s"$memValue,")
+      }
+      println("")
     }
 
     println(

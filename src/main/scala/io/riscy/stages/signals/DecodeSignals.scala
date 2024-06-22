@@ -11,6 +11,7 @@ class DecodeSignals(nArchRegisters:Int, dataWidth: Int) extends Bundle {
   // Actually, memToReg is true whenever
   // memRead is not BYTES_NO
   // this logic can be simplified
+  val word = Bool()
   val memToReg = Bool()
   val memRead = MemRWSize()
   val memWrite = MemRWSize()

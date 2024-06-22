@@ -32,10 +32,15 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
   io.signals.rs2Imm := false.B
   io.signals.regWrite := false.B
   io.signals.branchInvert := false.B
-  io.signals.rs1 := io.inst(19, 15)
-  io.signals.rs2 := io.inst(24, 20)
-  io.signals.rd := io.inst(11, 7)
   io.signals.immediate := immediateI
+
+  val rs1 = io.inst(19, 15)
+  val rs2 = io.inst(24, 20)
+  val rd = io.inst(11, 7)
+
+  io.signals.rs1 := rs1
+  io.signals.rs2 := rs2
+  io.signals.rd := rd
 
   when(OpCode.ADD === io.inst) {
     printf(cf"inst: ADD\n")
@@ -123,7 +128,7 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
 
     io.signals.aluOp := ExecuteOp.ADD
     io.signals.jump := true.B
-    io.signals.immediate := immediateUJ
+    io.signals.immediate := immediateI
     io.signals.regWrite := true.B
     io.signals.rs2Imm := true.B
   }.elsewhen(OpCode.LB === io.inst) {
@@ -280,11 +285,25 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
 
     io.signals.aluOp := ExecuteOp.NOP
     // todo: end
-  }.otherwise {
-    printf(cf"inst: ** Illegal OpCode **\n")
+  }.elsewhen(OpCode.SLLI === io.inst) {
+    printf(cf"inst: SLLI\n")
 
-    io.signals.aluOp := ExecuteOp.NOP
+    io.signals.aluOp := ExecuteOp.SLL
+    io.signals.regWrite := true.B
+    io.signals.rs2Imm := true.B
+  }.elsewhen(OpCode.SRLI === io.inst) {
+    printf(cf"inst: SRLI\n")
+
+    io.signals.aluOp := ExecuteOp.SRL
+    io.signals.regWrite := true.B
+    io.signals.rs2Imm := true.B
+  }.otherwise {
+    printf(cf"inst: ** Illegal OpCode: Inst: 0x${io.inst}%x **\n")
+
+    io.signals.aluOp := ExecuteOp.UNKNOWN
   }
+
+  chisel3.assert(io.signals.aluOp =/= ExecuteOp.UNKNOWN, cf"Illegal Op: ${io.inst}%x")
 }
 
 object Decode {

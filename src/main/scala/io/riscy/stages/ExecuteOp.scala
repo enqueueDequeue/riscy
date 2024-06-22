@@ -4,6 +4,7 @@ import chisel3.ChiselEnum
 
 object ExecuteOp extends ChiselEnum {
   val NOP = Value
+  val UNKNOWN = Value
   val ADD = Value
   val SUB = Value
   val XOR = Value

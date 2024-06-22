@@ -1,24 +1,26 @@
 package io.riscy.stages
 
 import chisel3.util.{Cat, Fill, is, log2Ceil, switch}
-import chisel3.{Bool, Bundle, Input, Module, Mux, Output, RegInit, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, when}
+import chisel3.{Bool, Bundle, Input, Module, Mux, Output, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth}
 
 class Execute(dataWidth: Int) extends Module {
   val io = IO(new Bundle {
     val a = Input(UInt(dataWidth.W))
     val b = Input(UInt(dataWidth.W))
     val branchInvert = Input(Bool())
+    val word = Input(Bool())
     val op = Input(ExecuteOp())
     val result = Output(UInt(dataWidth.W))
     val zero = Output(Bool())
   })
 
   val shamt = io.b(log2Ceil(dataWidth) - 1, 0)
-  val zeroInternal = RegInit(false.B)
+  val zeroInternal = Wire(Bool())
 
   io.zero := Mux(io.branchInvert, !zeroInternal, zeroInternal)
-
   io.result := 0.U
+
+  zeroInternal := false.B
 
   switch(io.op) {
     is(ExecuteOp.ADD) {

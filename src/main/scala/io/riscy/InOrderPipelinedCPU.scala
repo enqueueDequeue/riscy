@@ -130,14 +130,14 @@ class InOrderPipelinedCPU extends Module {
       fetchSignalsWire.instruction.bits := fetch.io.inst.deq()
     }.otherwise {
       fetchSignalsWire.instruction.valid := false.B
-      fetchSignalsWire.instruction.bits := DontCare
+      fetchSignalsWire.instruction.bits := NOP.U
       fetch.io.inst.nodeq()
     }
 
     when(!stall) {
       printf(cf"fetchSignals: valid: ${fetchSignalsWire.instruction.valid}%x, inst: ${fetchSignalsWire.instruction.bits}%x\n")
 
-      ifIdSignals.pc := Mux(fetch.io.inst.valid, pc, PC_INIT.U)
+      ifIdSignals.pc := Mux(fetchSignalsWire.instruction.valid, pc, PC_INIT.U)
       ifIdSignals.stage.fetch := fetchSignalsWire
     }
   }
@@ -146,8 +146,7 @@ class InOrderPipelinedCPU extends Module {
   {
     val decode = Module(new Decode(INST_WIDTH, DATA_WIDTH))
 
-    decode.io.inst := Mux(ifIdSignals.stage.fetch.instruction.valid,
-                          ifIdSignals.stage.fetch.instruction.bits, NOP.U)
+    decode.io.inst := ifIdSignals.stage.fetch.instruction.bits
 
     decodeSignalsWire := decode.io.signals
 
@@ -224,7 +223,7 @@ class InOrderPipelinedCPU extends Module {
     // In case of Jump instructions:
     // ALU calculates pc + imm. But, the results are always ignored
     // by the following mux. The nextPc computed will be used to set the PC
-    executeSignalsWire.nextPc := rrExSignals.pc + rrExSignals.stage.decode.immediate
+    executeSignalsWire.nextPc := Mux(rrExSignals.stage.decode.jump, execute.io.result, rrExSignals.pc + rrExSignals.stage.decode.immediate)
     executeSignalsWire.result := Mux(rrExSignals.stage.decode.jump, rrExSignals.pc + 4.U, execute.io.result)
     executeSignalsWire.zero := execute.io.zero
 
@@ -287,6 +286,8 @@ class InOrderPipelinedCPU extends Module {
   // Always, check the signals that execute is working on
   // OR the memory stage is working on
   when(rrExSignals.stage.decode.jump) {
+    printf(cf"jumping from $pc -> ${executeSignalsWire.nextPc}\n")
+
     // pc could be stored in executeSignalsWire
     pc := executeSignalsWire.nextPc
 
@@ -294,6 +295,8 @@ class InOrderPipelinedCPU extends Module {
     killDecodeSignals(idRrSignals.stage.decode)
     killDecodeSignals(rrExSignals.stage.decode)
   }.elsewhen(executeSignalsWire.zero && rrExSignals.stage.decode.branch) {
+    printf(cf"branching from $pc -> ${executeSignalsWire.nextPc}\n")
+
     pc := executeSignalsWire.nextPc
 
     killFetchSignals(ifIdSignals.stage.fetch)
@@ -401,7 +404,7 @@ object InOrderPipelinedCPU {
 
       out := 0.U
       stallOut := false.B
-    }.elsewhen(regReadSignalsDecode.rd === rs) {
+    }.elsewhen(regReadSignalsDecode.regWrite && regReadSignalsDecode.rd === rs) {
       // if the regReadSignals is holding the value
       // that means the execute is working on the instruction
 
@@ -419,7 +422,7 @@ object InOrderPipelinedCPU {
 
       // stall whenever there's a memory read
       stallOut := regReadSignalsDecode.memToReg
-    }.elsewhen(executeSignalsDecode.rd === rs) {
+    }.elsewhen(executeSignalsDecode.regWrite && executeSignalsDecode.rd === rs) {
       // if the executeSignals is holding the value
       // that means the memory stage is working on the instruction
 
@@ -428,7 +431,7 @@ object InOrderPipelinedCPU {
       // this code is duplicate of the write-back stage
       out := Mux(executeSignalsDecode.memToReg, memorySignalsWire.readData, executeSignals.result)
       stallOut := false.B
-    }.elsewhen(memorySignalsDecode.rd === rs) {
+    }.elsewhen(memorySignalsDecode.regWrite && memorySignalsDecode.rd === rs) {
       // if memorySignals is holding the value
       // that means the write-back stage is working on the instruction
 

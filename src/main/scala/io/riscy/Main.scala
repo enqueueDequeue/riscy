@@ -5,7 +5,7 @@ import chiseltest.RawTester.test
 import chiseltest.simulator.WriteVcdAnnotation
 import chiseltest.{VerilatorBackendAnnotation, testableBool, testableClock, testableData}
 import circt.stage.ChiselStage
-import io.riscy.stages.PhyRegs
+import io.riscy.stages.{PhyRegs, Rename}
 
 import scala.util.control.Breaks.{break, breakable}
 
@@ -141,6 +141,75 @@ object Main {
           iCache.io.readValue.bits.expect(i.U)
         }
       }
+    }
+
+    test(new Rename(32, 4)) { dut =>
+      println(s"Testing Rename")
+
+      dut.io.rs1.poke(0.U)
+      dut.io.rs2.poke(0.U)
+
+      // renaming arch register register
+      dut.io.rd.poke(1.U)
+      dut.io.rdPhyReg.valid.expect(true.B)
+      dut.io.rdPhyReg.bits.expect(0.U)
+      dut.clock.step()
+
+      dut.io.rd.poke(1.U)
+      dut.io.rdPhyReg.valid.expect(true.B)
+      dut.io.rdPhyReg.bits.expect(1.U)
+      dut.clock.step()
+
+      dut.io.rd.poke(3.U)
+      dut.io.rdPhyReg.valid.expect(true.B)
+      dut.io.rdPhyReg.bits.expect(2.U)
+      dut.clock.step()
+
+      dut.io.rd.poke(4.U)
+      dut.io.rdPhyReg.valid.expect(true.B)
+      dut.io.rdPhyReg.bits.expect(3.U)
+      dut.clock.step()
+
+      dut.io.rd.poke(5.U)
+      dut.io.rdPhyReg.valid.expect(false.B)
+      dut.clock.step()
+
+      dut.io.rd.poke(6.U)
+      dut.io.rdPhyReg.valid.expect(false.B)
+      dut.clock.step()
+
+      // commit the physical register
+      // this will write to RRat
+      dut.io.commit.valid.poke(true.B)
+      dut.io.commit.bits.archReg.poke(1.U)
+      dut.io.commit.bits.phyReg.poke(0.U)
+      dut.io.rd.poke(6.U)
+      dut.io.rdPhyReg.valid.expect(false.B)
+      dut.clock.step()
+
+      // commit again
+      // this will free the previous value from RRat
+      dut.io.commit.valid.poke(true.B)
+      dut.io.commit.bits.archReg.poke(1.U)
+      dut.io.commit.bits.phyReg.poke(1.U)
+      dut.io.rd.poke(7.U)
+      dut.io.rdPhyReg.valid.expect(false.B)
+      dut.clock.step()
+
+      dut.io.commit.valid.poke(false.B)
+      dut.io.rd.poke(7.U)
+      dut.io.rdPhyReg.valid.expect(true.B)
+      dut.io.rdPhyReg.bits.expect(0.U)
+      dut.clock.step()
+
+      dut.io.rs1.poke(1.U)
+      dut.io.rs2.poke(3.U)
+      dut.io.rs1PhyReg.expect(1.U)
+      dut.io.rs2PhyReg.expect(2.U)
+      dut.io.rd.poke(8.U)
+      dut.io.rdPhyReg.valid.expect(false.B)
+
+      println(s"Renaming test completed")
     }
 
     test(new InOrderCPU(), Seq(WriteVcdAnnotation)) { dut =>

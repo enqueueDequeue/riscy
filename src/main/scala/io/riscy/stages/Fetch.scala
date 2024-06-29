@@ -1,7 +1,7 @@
 package io.riscy.stages
 
 import chisel3.util.Decoupled
-import chisel3.{Bundle, Flipped, Input, Module, UInt, fromBooleanToLiteral, fromIntToWidth, when}
+import chisel3.{Bundle, Flipped, Input, Module, UInt, fromIntToWidth, when}
 
 class Fetch(addressWidth: Int, instructionWidth: Int) extends Module {
 

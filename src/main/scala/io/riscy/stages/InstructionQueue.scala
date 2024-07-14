@@ -2,16 +2,17 @@ package io.riscy.stages
 
 import chisel3.util.{PriorityMux, Valid, isPow2, log2Ceil}
 import chisel3.{Bool, Bundle, DontCare, Input, Mem, Module, Mux, Output, PrintableHelper, RegInit, UInt, Vec, VecInit, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.stages.InstructionQueue.{getActIdx, getMapIdx, getMapIdxH}
+import io.riscy.stages.InstructionQueue.{getMapIdx, getMapIdxH, getStationIdx}
 import io.riscy.stages.signals.IQSignals
 
-class InstructionQueue(nEntries: Int, nPhyRegs: Int, nWakeUpPorts: Int) extends Module {
+class InstructionQueue(nEntries: Int, nPhyRegs: Int) extends Module {
   assert(isPow2(nEntries))
   assert(isPow2(nPhyRegs))
 
   val io = IO(new Bundle {
     val instSignals = Input(Valid(IQSignals()))
-    val wakeupRegs = Input(Vec(nWakeUpPorts, Valid(UInt(log2Ceil(nPhyRegs).W))))
+    val wakeUpRegs = Input(UInt(nPhyRegs.W))
+    // val wakeUpRegs = Input(Vec(nWakeUpPorts, Valid(UInt(log2Ceil(nPhyRegs).W))))
     val readyInstSignals = Output(Valid(IQSignals()))
   })
 
@@ -20,14 +21,13 @@ class InstructionQueue(nEntries: Int, nPhyRegs: Int, nWakeUpPorts: Int) extends 
   // everything below this index is deemed to be free
   val freeStationIdx = RegInit(0.U(log2Ceil(nEntries + 1).W))
 
-  // todo: use mem
-  //  and not perform init?
-  //  this is pretty important
-  //  because, using vec is creating a huge
-  //  Mux which can simply be avoided by using Mem
-  //  Also, a freeStationsInitFlags can be maintained
-  //  to default the value to the given idx
-  val freeStations = RegInit(VecInit(Seq.tabulate(nEntries) { _.U(log2Ceil(nEntries).W) }))
+  // freeStationsAlloc maintains if the freeStations has been
+  // initialized or not. And, freeStations contain the index of
+  // the station which is ready to be used.
+  val freeStationsAlloc = RegInit(VecInit(Seq.fill(nEntries) { false.B }))
+  val freeStations = Mem(nEntries, UInt(log2Ceil(nEntries).W))
+
+  // the actual instruction data to be stored
   val stations = Mem(nEntries, new IQSignals())
 
   // width = nEntries
@@ -56,27 +56,12 @@ class InstructionQueue(nEntries: Int, nPhyRegs: Int, nWakeUpPorts: Int) extends 
     }
   })
 
-  // all the instructions that depend on this
-  // register are no longer dependent
-  // todo: this logic is not being generated
-  //  check why
-  for (w <- 0 until nWakeUpPorts) {
-    when(io.wakeupRegs(w).valid) {
-      for (idx <- 0 until nEntries) {
-        map(getMapIdxH(io.wakeupRegs(w).bits, idx.U, nEntriesLog)) := 0.U
-      }
-    }
-  }
-
   // wake up instructions whose registers are ready
-  for (idx <- 0 until nEntries) {
-    var depPending = false.B
+  for (e <- 0 until nEntries) {
+    val deps = VecInit(Seq.tabulate(nPhyRegs) { reg => map(getMapIdx(reg, e, nEntriesLog)) })
+    val depPending = deps.reduceTree(_ | _)
 
-    for (reg <- 0 until nPhyRegs) {
-      depPending = depPending | map(getMapIdx(reg, idx, nEntriesLog))
-    }
-
-     readyInsts(idx) := !depPending
+     readyInsts(e) := !depPending
   }
 
   val tmpNextFreeStationIdx = Wire(UInt(log2Ceil(nEntries + 1).W))
@@ -88,8 +73,10 @@ class InstructionQueue(nEntries: Int, nPhyRegs: Int, nWakeUpPorts: Int) extends 
     printf(cf"allocating inst in inst queue")
 
     val stationIdx = Wire(UInt(log2Ceil(nEntries).W))
+    val actFreeStationIdx = getStationIdx(freeStationIdx, nEntries)
 
-    stationIdx := freeStations(getActIdx(freeStationIdx, nEntries))
+    // if the allocation has not been done yet, then use the freeStationIdx as it is
+    stationIdx := Mux(freeStationsAlloc(actFreeStationIdx), freeStations(actFreeStationIdx), actFreeStationIdx)
 
     stations(stationIdx) := io.instSignals.bits
 
@@ -112,14 +99,20 @@ class InstructionQueue(nEntries: Int, nPhyRegs: Int, nWakeUpPorts: Int) extends 
   }
 
   when(readyInstIdx.valid) {
-    freeStations(getActIdx(tmpNextFreeStationIdx, nEntries)) := readyInstIdx.bits
+    val actFreeStationIdx = getStationIdx(tmpNextFreeStationIdx, nEntries)
+
+    freeStationsAlloc(actFreeStationIdx) := true.B
+    freeStations(actFreeStationIdx) := readyInstIdx.bits
     nextFreeStationIdx := tmpNextFreeStationIdx - 1.U
   }.otherwise {
     nextFreeStationIdx := tmpNextFreeStationIdx
   }
 
-  for (idx <- 0 until nPhyRegs * nEntries) {
-    map(idx) := map(idx) | nextMapMask(idx)
+  for (r <- 0 until nPhyRegs) {
+    for (e <- 0 until nEntries) {
+      val idx = getMapIdx(r, e, nEntriesLog)
+      map(idx) := Mux(io.wakeUpRegs(r), 0.U, map(idx) | nextMapMask(idx))
+    }
   }
 
   freeStationIdx := nextFreeStationIdx
@@ -129,7 +122,7 @@ class InstructionQueue(nEntries: Int, nPhyRegs: Int, nWakeUpPorts: Int) extends 
 }
 
 object InstructionQueue {
-  def getActIdx(idx: UInt, nEntries: Int): UInt = {
+  def getStationIdx(idx: UInt, nEntries: Int): UInt = {
     idx(log2Ceil(nEntries) - 1, 0)
   }
 

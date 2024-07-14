@@ -749,7 +749,7 @@ object Main {
     */
 
     val iqV = ChiselStage.emitSystemVerilog(
-      gen = new InstructionQueue(64, 128, 4),
+      gen = new InstructionQueue(64, 128),
       firtoolOpts = Array("-disable-all-randomization")
     )
 

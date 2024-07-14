@@ -45,7 +45,7 @@ class OutOfOrderCPU extends Module {
 
   // Issue
   // todo: make 4 a value in Defaults
-  val instructionQueue = Module(new InstructionQueue(N_IQ_ENTRIES, N_PHY_REGISTERS, 4))
+  val instructionQueue = Module(new InstructionQueue(N_IQ_ENTRIES, N_PHY_REGISTERS))
 
   // Reg Read
   // Dispatch

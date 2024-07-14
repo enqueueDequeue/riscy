@@ -5,8 +5,10 @@ import chiseltest.RawTester.test
 import chiseltest.simulator.WriteVcdAnnotation
 import chiseltest.{VerilatorBackendAnnotation, testableBool, testableClock, testableData}
 import circt.stage.ChiselStage
-import io.riscy.stages.{PhyRegs, Rename}
+import io.riscy.stages.{InstructionQueue, PhyRegs, Rename}
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.{Files, Paths}
 import scala.util.control.Breaks.{break, breakable}
 
 object Main {
@@ -64,6 +66,7 @@ object Main {
 
   def main(args: Array[String]): Unit = {
 
+    /*
     test(new PhyRegs(128)) { dut =>
       dut.io.rdEn.poke(true.B)
 
@@ -743,12 +746,16 @@ object Main {
       require(toLong(memory.slice(4016, 4024)) == 1)
       require(toLong(memory.slice(4008, 4016)) == 0)
     }
+    */
 
-    println(
-      ChiselStage.emitSystemVerilog(
-        gen = new InOrderPipelinedCPU(),
-        firtoolOpts = Array("-disable-all-randomization")
-      )
+    val iqV = ChiselStage.emitSystemVerilog(
+      gen = new InstructionQueue(64, 128, 4),
+      firtoolOpts = Array("-disable-all-randomization")
     )
+
+    val filePath = "/tmp/iq.v"
+
+    Files.write(Paths.get(filePath), iqV.getBytes(StandardCharsets.UTF_8))
+    println(s"File Updated: $filePath")
   }
 }

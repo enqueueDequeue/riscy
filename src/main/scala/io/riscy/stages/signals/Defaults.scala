@@ -8,4 +8,5 @@ object Defaults {
   val DATA_WIDTH = 64
   val ADDR_WIDTH = 64
   val BIT_WIDTH = 8
+  val N_IQ_ENTRIES = 64
 }

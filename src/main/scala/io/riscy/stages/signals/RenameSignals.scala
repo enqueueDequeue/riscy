@@ -10,5 +10,5 @@ class RenameSignals(nPhyRegs: Int) extends Bundle {
 }
 
 object RenameSignals {
-  def apply(): RenameSignals = new RenameSignals(Defaults.N_PHY_REGISTERS)
+  def apply()(implicit params: Parameters): RenameSignals = new RenameSignals(params.nPhyRegs)
 }

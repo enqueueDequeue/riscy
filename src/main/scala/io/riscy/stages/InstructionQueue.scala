@@ -3,9 +3,12 @@ package io.riscy.stages
 import chisel3.util.{PriorityMux, Valid, isPow2, log2Ceil}
 import chisel3.{Bool, Bundle, DontCare, Input, Mem, Module, Mux, Output, PrintableHelper, RegInit, UInt, Vec, VecInit, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.stages.InstructionQueue.{getMapIdx, getMapIdxH, getStationIdx}
-import io.riscy.stages.signals.IQSignals
+import io.riscy.stages.signals.{IQSignals, Parameters}
 
-class InstructionQueue(nEntries: Int, nPhyRegs: Int) extends Module {
+class InstructionQueue()(implicit val params: Parameters) extends Module {
+  val nPhyRegs = params.nPhyRegs
+  val nEntries = params.nIQEntries
+
   assert(isPow2(nEntries))
   assert(isPow2(nPhyRegs))
 
@@ -24,7 +27,9 @@ class InstructionQueue(nEntries: Int, nPhyRegs: Int) extends Module {
   // freeStationsAlloc maintains if the freeStations has been
   // initialized or not. And, freeStations contain the index of
   // the station which is ready to be used.
-  val freeStationsAlloc = RegInit(VecInit(Seq.fill(nEntries) { false.B }))
+  // todo: Decide between the UInt and Vec approaches
+  val freeStationsAlloc = RegInit(0.U(nEntries.W))
+  // val freeStationsAlloc = RegInit(VecInit(Seq.fill(nEntries) { false.B }))
   val freeStations = Mem(nEntries, UInt(log2Ceil(nEntries).W))
 
   // the actual instruction data to be stored
@@ -101,7 +106,7 @@ class InstructionQueue(nEntries: Int, nPhyRegs: Int) extends Module {
   when(readyInstIdx.valid) {
     val actFreeStationIdx = getStationIdx(tmpNextFreeStationIdx, nEntries)
 
-    freeStationsAlloc(actFreeStationIdx) := true.B
+    freeStationsAlloc := freeStationsAlloc | (1.U << actFreeStationIdx).asUInt
     freeStations(actFreeStationIdx) := readyInstIdx.bits
     nextFreeStationIdx := tmpNextFreeStationIdx - 1.U
   }.otherwise {

@@ -8,5 +8,5 @@ class RegReadSignals(dataWidth: Int) extends Bundle {
 }
 
 object RegReadSignals {
-  def apply(): RegReadSignals = new RegReadSignals(Defaults.DATA_WIDTH)
+  def apply()(implicit params: Parameters): RegReadSignals = new RegReadSignals(params.dataWidth)
 }

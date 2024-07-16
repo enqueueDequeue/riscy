@@ -2,8 +2,12 @@ package io.riscy.stages
 
 import chisel3.util.{Valid, isPow2, log2Ceil}
 import chisel3.{Bundle, DontCare, Input, Module, Output, PrintableHelper, RegInit, UInt, VecInit, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
+import io.riscy.stages.signals.Parameters
 
-class Rename(nArchRegs: Int, nPhyRegs: Int) extends Module {
+class Rename()(implicit val params: Parameters) extends Module {
+  val nPhyRegs = params.nPhyRegs
+  val nArchRegs = params.nArchRegs
+
   require(isPow2(nPhyRegs))
 
   val io = IO(new Bundle {

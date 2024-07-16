@@ -4,27 +4,30 @@ import chisel3.util.Decoupled
 import chisel3.{Bool, Bundle, Data, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.InOrderPipelinedCPU.{NOP, PC_INIT, forward, initDecodeSignals, initExecuteSignals, initFetchSignals, initMemorySignals, initRegReadSignals, initStage, killDecodeSignals, killFetchSignals}
 import io.riscy.stages.{Decode, Execute, ExecuteOp, Fetch, MemRWSize, Memory, PhyRegs, WriteBack}
-import io.riscy.stages.signals.{DecodeSignals, ExecuteSignals, FetchSignals, MemorySignals, RegReadSignals, Stage, WriteBackSignals}
-import io.riscy.stages.signals.Defaults.{ADDR_WIDTH, BIT_WIDTH, DATA_WIDTH, INST_WIDTH, N_ARCH_REGISTERS}
+import io.riscy.stages.signals.{DecodeSignals, ExecuteSignals, FetchSignals, MemorySignals, Parameters, RegReadSignals, Stage, WriteBackSignals}
 
 /**
  * An InOrder 6 Stage Processor
  *
  * Fetch -> Decode -> Register Read -> Execute -> Memory -> WriteBack
  */
-class InOrderPipelinedCPU extends Module {
+class InOrderPipelinedCPU()(implicit val params: Parameters) extends Module {
+  val addrWidth = params.addrWidth
+  val bitWidth = params.bitWidth
+  val instWidth = params.instWidth
+  val dataWidth = params.dataWidth
 
   val io = IO(new Bundle {
-    val iReadAddr = Decoupled(UInt(ADDR_WIDTH.W))
-    val iReadValue = Flipped(Decoupled(UInt(INST_WIDTH.W)))
+    val iReadAddr = Decoupled(UInt(addrWidth.W))
+    val iReadValue = Flipped(Decoupled(UInt(instWidth.W)))
 
-    val dReadLen = Output(UInt((DATA_WIDTH / BIT_WIDTH).W))
-    val dReadAddr = Output(UInt(ADDR_WIDTH.W))
-    val dReadValue = Input(UInt(DATA_WIDTH.W))
+    val dReadLen = Output(UInt((dataWidth / bitWidth).W))
+    val dReadAddr = Output(UInt(addrWidth.W))
+    val dReadValue = Input(UInt(dataWidth.W))
 
-    val dWriteLen = Output(UInt((DATA_WIDTH / BIT_WIDTH).W))
-    val dWriteAddr = Output(UInt(ADDR_WIDTH.W))
-    val dWriteValue = Output(UInt(DATA_WIDTH.W))
+    val dWriteLen = Output(UInt((dataWidth / bitWidth).W))
+    val dWriteAddr = Output(UInt(addrWidth.W))
+    val dWriteValue = Output(UInt(dataWidth.W))
   })
 
   val ifIdSignals = RegInit({
@@ -102,9 +105,9 @@ class InOrderPipelinedCPU extends Module {
 
   // Indicates if the instruction needs to be stalled
   val stall = Wire(Bool())
-  val pc = RegInit(PC_INIT.U(ADDR_WIDTH.W))
+  val pc = RegInit(PC_INIT.U(addrWidth.W))
 
-  val phyRegs = Module(new PhyRegs(N_ARCH_REGISTERS))
+  val phyRegs = Module(new PhyRegs())
 
   printf(cf"pc: $pc\n")
 
@@ -112,7 +115,7 @@ class InOrderPipelinedCPU extends Module {
 
   // fetch
   {
-    val fetch = Module(new Fetch(ADDR_WIDTH, INST_WIDTH))
+    val fetch = Module(new Fetch())
 
     fetch.io.iReadAddr <> io.iReadAddr
     fetch.io.iReadValue <> io.iReadValue
@@ -138,7 +141,7 @@ class InOrderPipelinedCPU extends Module {
 
   // decode
   {
-    val decode = Module(new Decode(INST_WIDTH, DATA_WIDTH))
+    val decode = Module(new Decode())
 
     decode.io.inst := ifIdSignals.stage.fetch.instruction.bits
 
@@ -206,7 +209,7 @@ class InOrderPipelinedCPU extends Module {
 
   // execute
   {
-    val execute = Module(new Execute(DATA_WIDTH))
+    val execute = Module(new Execute())
 
     execute.io.op := rrExSignals.stage.decode.aluOp
     execute.io.branchInvert := rrExSignals.stage.decode.branchInvert
@@ -233,7 +236,7 @@ class InOrderPipelinedCPU extends Module {
 
   // memory
   {
-    val memory = Module(new Memory(ADDR_WIDTH, DATA_WIDTH))
+    val memory = Module(new Memory())
 
     // setup
     memory.io.dReadLen <> io.dReadLen
@@ -262,7 +265,7 @@ class InOrderPipelinedCPU extends Module {
 
   // write-back
   {
-    val writeBack = Module(new WriteBack(DATA_WIDTH))
+    val writeBack = Module(new WriteBack())
 
     writeBack.io.memToReg := memWbSignals.stage.decode.memToReg
     writeBack.io.execResult := memWbSignals.stage.execute.result

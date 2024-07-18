@@ -40,6 +40,8 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   // Decode
   val decode = Module(new Decode())
 
+  // ROB allocate
+
   // Rename
   val rename = Module(new Rename())
 

@@ -7,4 +7,5 @@ case class Parameters(nArchRegs: Int,
                       dataWidth: Int,
                       addrWidth: Int,
                       bitWidth: Int,
-                      nIQEntries: Int)
+                      nIQEntries: Int,
+                      nROBEntries: Int)

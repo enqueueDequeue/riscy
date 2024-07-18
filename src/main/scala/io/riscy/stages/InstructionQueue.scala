@@ -8,14 +8,14 @@ import io.riscy.stages.signals.{IQSignals, Parameters}
 class InstructionQueue()(implicit val params: Parameters) extends Module {
   val nPhyRegs = params.nPhyRegs
   val nEntries = params.nIQEntries
+  val nROBEntries = params.nROBEntries
 
   assert(isPow2(nEntries))
   assert(isPow2(nPhyRegs))
 
   val io = IO(new Bundle {
-    val instSignals = Input(Valid(IQSignals()))
     val wakeUpRegs = Input(UInt(nPhyRegs.W))
-    // val wakeUpRegs = Input(Vec(nWakeUpPorts, Valid(UInt(log2Ceil(nPhyRegs).W))))
+    val instSignals = Input(Valid(IQSignals()))
     val readyInstSignals = Output(Valid(IQSignals()))
   })
 
@@ -41,6 +41,7 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
   val readyInsts = Wire(Vec(nEntries, Bool()))
 
   // last mux value reserved for invalid
+  // todo: Don't return stations which didn't allocate yet
   val readyInstIdx = PriorityMux(Seq.tabulate(nEntries + 1) { idx =>
     if (idx < nEntries) {
       val instSignals = Wire(Valid(UInt(log2Ceil(nEntries).W)))
@@ -75,30 +76,38 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
   val nextMapMask = Wire(UInt((nPhyRegs * nEntries).W))
 
   when(io.instSignals.valid && freeStationIdx < nEntries.U) {
-    printf(cf"allocating inst in inst queue")
-
     val stationIdx = Wire(UInt(log2Ceil(nEntries).W))
     val actFreeStationIdx = getStationIdx(freeStationIdx, nEntries)
 
     // if the allocation has not been done yet, then use the freeStationIdx as it is
     stationIdx := Mux(freeStationsAlloc(actFreeStationIdx), freeStations(actFreeStationIdx), actFreeStationIdx)
 
+    printf(cf"allocating ${io.instSignals} @ idx: $stationIdx\n")
+
     stations(stationIdx) := io.instSignals.bits
 
     // only depend if the register needs to be ready actually
-    // todo: only mark as true iff rs1 needs to be read
-    //  for example, if rs1PC is true, then there's no reason
-    //  to mark this as true
     val rs1Mask = Wire(UInt((nPhyRegs * nEntries).W))
     val rs2Mask = Wire(UInt((nPhyRegs * nEntries).W))
 
-    rs1Mask := 1.U << getMapIdxH(io.instSignals.bits.rename.rs1PhyReg, stationIdx, nEntriesLog)
-    rs2Mask := 1.U << getMapIdxH(io.instSignals.bits.rename.rs2PhyReg, stationIdx, nEntriesLog)
+    when(io.instSignals.bits.rs1PhyReg.valid) {
+      rs1Mask := 1.U << getMapIdxH(io.instSignals.bits.rs1PhyReg.bits, stationIdx, nEntriesLog)
+    }.otherwise {
+      rs1Mask := 0.U
+    }
+
+    when(io.instSignals.bits.rs2PhyReg.valid) {
+      rs2Mask := 1.U << getMapIdxH(io.instSignals.bits.rs2PhyReg.bits, stationIdx, nEntriesLog)
+    }.otherwise {
+      rs2Mask := 0.U
+    }
 
     nextMapMask := rs1Mask | rs2Mask
 
     tmpNextFreeStationIdx := freeStationIdx + 1.U
   }.otherwise {
+    printf(cf"Not allocating ${io.instSignals} - $freeStationIdx\n")
+
     tmpNextFreeStationIdx := freeStationIdx
     nextMapMask := 0.U
   }
@@ -121,6 +130,9 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
   }
 
   freeStationIdx := nextFreeStationIdx
+
+  printf(cf"readyInsts: $readyInsts\n")
+  printf(cf"readyInstIdx: $readyInstIdx\n")
 
   io.readyInstSignals.valid := readyInstIdx.valid
   io.readyInstSignals.bits := Mux(readyInstIdx.valid, stations(readyInstIdx.bits), DontCare)

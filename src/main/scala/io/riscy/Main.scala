@@ -72,8 +72,9 @@ object Main {
                 dataWidth: Int = 64,
                 addrWidth: Int = 64,
                 bitWidth: Int = 8,
-                nIQEntries: Int = 64): Parameters = {
-    Parameters(nArchRegs, nPhyRegs, instWidth, wordWidth, dataWidth, addrWidth, bitWidth, nIQEntries)
+                nIQEntries: Int = 64,
+                nROBEntries: Int = 64): Parameters = {
+    Parameters(nArchRegs, nPhyRegs, instWidth, wordWidth, dataWidth, addrWidth, bitWidth, nIQEntries, nROBEntries)
   }
 
   def main(args: Array[String]): Unit = {
@@ -772,12 +773,122 @@ object Main {
       }
     }
 
-    // todo: add test cases
     {
-      implicit val params = getParams(nIQEntries = 4)
+      implicit val params = getParams(nPhyRegs = 8, nIQEntries = 4)
 
       test(new InstructionQueue()) { dut =>
-        println("IQ testing pending")
+        dut.io.wakeUpRegs.poke(0x0.U)
+
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.robIdx.poke(1.U)
+        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
+        dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs2PhyReg.bits.poke(3.U)
+        dut.clock.step()
+
+        dut.io.instSignals.valid.poke(false.B)
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+
+        dut.io.wakeUpRegs.poke(0b1010.U)
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+
+        dut.io.wakeUpRegs.poke(0x0.U)
+
+        dut.io.readyInstSignals.valid.expect(true.B)
+        dut.io.instSignals.bits.robIdx.expect(1.U)
+        dut.clock.step()
+
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+      }
+
+      test(new InstructionQueue()) { dut =>
+        println("---------------------------------------------")
+
+        dut.io.wakeUpRegs.poke(0x0.U)
+
+        // inst 0
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.robIdx.poke(0.U)
+        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
+        dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs2PhyReg.bits.poke(7.U)
+        dut.clock.step()
+
+        // inst 1
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.robIdx.poke(1.U)
+        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs1PhyReg.bits.poke(2.U)
+        dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs2PhyReg.bits.poke(4.U)
+        dut.clock.step()
+
+        // inst 2
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.robIdx.poke(2.U)
+        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs1PhyReg.bits.poke(5.U)
+        dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs2PhyReg.bits.poke(6.U)
+        dut.clock.step()
+
+        // waking up register 1
+        dut.io.wakeUpRegs.poke(0b0000010.U)
+        dut.io.instSignals.valid.poke(false.B)
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+
+        // waking up register 2 & 4
+        dut.io.wakeUpRegs.poke(0b0010100.U)
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+
+        // inst 1 should've been woken up
+        dut.io.wakeUpRegs.poke(0.U)
+        dut.io.readyInstSignals.valid.expect(true.B)
+        dut.io.readyInstSignals.bits.expect(1.U)
+        dut.clock.step()
+
+        // inst 3
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.robIdx.poke(3.U)
+        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs1PhyReg.bits.poke(3.U)
+        dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs2PhyReg.bits.poke(6.U)
+        dut.clock.step()
+
+        // waking up register 3, 5 & 6
+        dut.io.instSignals.valid.poke(false.B)
+        dut.io.wakeUpRegs.poke(0b1101000.U)
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+
+        // inst 3 should've been woken up
+        dut.io.readyInstSignals.valid.expect(true.B)
+        dut.io.readyInstSignals.bits.expect(3.U)
+        dut.clock.step()
+
+        // inst 2 should've been woken up
+        dut.io.readyInstSignals.valid.expect(true.B)
+        dut.io.readyInstSignals.bits.expect(2.U)
+        dut.clock.step()
+
+        // wake up register 7 and then inst 0 should be ready
+        dut.io.wakeUpRegs.poke(0b10000000.U)
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+
+        dut.io.readyInstSignals.valid.expect(true.B)
+        dut.io.readyInstSignals.bits.expect(0.U)
+        dut.clock.step()
+
+        dut.clock.step()
       }
     }
 

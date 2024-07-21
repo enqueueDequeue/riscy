@@ -79,7 +79,6 @@ object Main {
 
   def main(args: Array[String]): Unit = {
 
-    /*
     {
       implicit val params = getParams()
 
@@ -773,7 +772,6 @@ object Main {
         require(toLong(memory.slice(4008, 4016)) == 0)
       }
     }
-    */
 
     {
       implicit val params = getParams(nPhyRegs = 8, nIQEntries = 4)
@@ -1026,11 +1024,102 @@ object Main {
       implicit val params = getParams(nROBEntries = 4)
 
       test(new ROB()) { dut =>
-        dut.clock.step()
-
+        // inst 1
         dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x01.U)
         dut.io.robIdx.valid.expect(true.B)
         dut.io.robIdx.bits.expect(0.U)
+        dut.clock.step()
+
+        // inst 2
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x02.U)
+        dut.io.robIdx.valid.expect(true.B)
+        dut.io.robIdx.bits.expect(1.U)
+        dut.clock.step()
+
+        // inst 3
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x03.U)
+        dut.io.robIdx.valid.expect(true.B)
+        dut.io.robIdx.bits.expect(2.U)
+        dut.clock.step()
+
+        // inst 4 - won't fit in, addressing limitations
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x04.U)
+        dut.io.robIdx.valid.expect(false.B)
+        dut.clock.step()
+
+        // commit inst 1
+        dut.io.instSignals.valid.poke(false.B)
+        dut.io.commitRobIdx.valid.poke(true.B)
+        dut.io.commitRobIdx.bits.poke(0.U)
+        dut.clock.step()
+
+        // expect inst 1 to retire
+        dut.io.retireInst.valid.expect(true.B)
+        dut.io.retireInst.bits.fetchSignals.instruction.valid.expect(true.B)
+        dut.io.retireInst.bits.fetchSignals.instruction.bits.expect(0x01.U)
+        // commit inst 3
+        dut.io.commitRobIdx.valid.poke(true.B)
+        dut.io.commitRobIdx.bits.poke(2.U)
+        dut.clock.step()
+
+        // nothing should retire
+        // BUT, should be able to allocate now
+        // as inst 1 is retired now
+        // inst 5
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x05.U)
+        dut.io.robIdx.valid.expect(true.B)
+        dut.io.robIdx.bits.expect(3.U)
+        // ----------------------------------------
+        dut.io.commitRobIdx.valid.poke(false.B)
+        dut.io.retireInst.valid.expect(false.B)
+        dut.clock.step()
+
+        // still nothing should retire
+        dut.io.instSignals.valid.poke(false.B)
+        dut.io.commitRobIdx.valid.poke(false.B)
+        // ----------------------------------------
+        dut.io.retireInst.valid.expect(false.B)
+        dut.clock.step()
+
+        // commit instruction 2
+        // still nothing should retire
+        dut.io.commitRobIdx.valid.poke(true.B)
+        dut.io.commitRobIdx.bits.poke(1.U)
+        // ----------------------------------------
+        dut.io.retireInst.valid.expect(false.B)
+        dut.clock.step()
+
+        // now, 2 & 3 should retire
+        dut.io.commitRobIdx.valid.poke(false.B)
+        // ----------------------------------------
+        dut.io.retireInst.valid.expect(true.B)
+        dut.io.retireInst.bits.fetchSignals.instruction.valid.expect(true.B)
+        dut.io.retireInst.bits.fetchSignals.instruction.bits.expect(0x02.U)
+        dut.clock.step()
+
+        // inst 6
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x06.U)
+        dut.io.robIdx.valid.expect(true.B)
+        dut.io.robIdx.bits.expect(0.U)
+        // ----------------------------------------
+        dut.io.retireInst.valid.expect(true.B)
+        dut.io.retireInst.bits.fetchSignals.instruction.valid.expect(true.B)
+        dut.io.retireInst.bits.fetchSignals.instruction.bits.expect(0x03.U)
+        dut.clock.step()
+
+        dut.io.instSignals.valid.poke(false.B)
         dut.clock.step()
       }
     }

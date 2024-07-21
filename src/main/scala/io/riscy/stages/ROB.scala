@@ -27,6 +27,10 @@ class ROB()(implicit val params: Parameters) extends Module {
 
   // everything between robHead and robTail are
   // active instructions in the pipeline
+  // NOTE: Even though we allocate nROBEntries,
+  //  we can only address (nROBEntries - 1) entries
+  //  This is because, tail MUST trail the head by
+  //  at least one entry
   val robHead = RegInit(0.U(log2Ceil(nROBEntries).W))
   val robTail = RegInit(0.U(log2Ceil(nROBEntries).W))
   val entries = Mem(nROBEntries, Valid(new Bundle {
@@ -67,6 +71,8 @@ class ROB()(implicit val params: Parameters) extends Module {
 
   when(io.commitRobIdx.valid) {
     assert(entries(io.commitRobIdx.bits).valid, "Invalid instruction being committed")
+    assert(!entries(io.commitRobIdx.bits).bits.committed, "Cannot commit already committed instruction")
+
     entries(io.commitRobIdx.bits).bits.committed := true.B
 
     // NOTE: Head can be moved up by one position here itself

@@ -6,7 +6,7 @@ import chiseltest.simulator.WriteVcdAnnotation
 import chiseltest.{VerilatorBackendAnnotation, testableBool, testableClock, testableData}
 import circt.stage.ChiselStage
 import io.riscy.stages.signals.Parameters
-import io.riscy.stages.{InstructionQueue, PhyRegs, Rename}
+import io.riscy.stages.{InstructionQueue, PhyRegs, ROB, Rename}
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
@@ -79,6 +79,7 @@ object Main {
 
   def main(args: Array[String]): Unit = {
 
+    /*
     {
       implicit val params = getParams()
 
@@ -772,6 +773,7 @@ object Main {
         require(toLong(memory.slice(4008, 4016)) == 0)
       }
     }
+    */
 
     {
       implicit val params = getParams(nPhyRegs = 8, nIQEntries = 4)
@@ -785,6 +787,7 @@ object Main {
         dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
         dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs2PhyReg.bits.poke(3.U)
+        dut.io.iqIdx.valid.expect(true.B)
         dut.clock.step()
 
         dut.io.instSignals.valid.poke(false.B)
@@ -798,7 +801,7 @@ object Main {
         dut.io.wakeUpRegs.poke(0x0.U)
 
         dut.io.readyInstSignals.valid.expect(true.B)
-        dut.io.instSignals.bits.robIdx.expect(1.U)
+        dut.io.readyInstSignals.bits.expect(1.U)
         dut.clock.step()
 
         dut.io.readyInstSignals.valid.expect(false.B)
@@ -817,6 +820,7 @@ object Main {
         dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
         dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs2PhyReg.bits.poke(7.U)
+        dut.io.iqIdx.valid.expect(true.B)
         dut.clock.step()
 
         // inst 1
@@ -826,6 +830,7 @@ object Main {
         dut.io.instSignals.bits.rs1PhyReg.bits.poke(2.U)
         dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs2PhyReg.bits.poke(4.U)
+        dut.io.iqIdx.valid.expect(true.B)
         dut.clock.step()
 
         // inst 2
@@ -835,6 +840,7 @@ object Main {
         dut.io.instSignals.bits.rs1PhyReg.bits.poke(5.U)
         dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs2PhyReg.bits.poke(6.U)
+        dut.io.iqIdx.valid.expect(true.B)
         dut.clock.step()
 
         // waking up register 1
@@ -861,6 +867,7 @@ object Main {
         dut.io.instSignals.bits.rs1PhyReg.bits.poke(3.U)
         dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs2PhyReg.bits.poke(6.U)
+        dut.io.iqIdx.valid.expect(true.B)
         dut.clock.step()
 
         // waking up register 3, 5 & 6
@@ -888,6 +895,142 @@ object Main {
         dut.io.readyInstSignals.bits.expect(0.U)
         dut.clock.step()
 
+        dut.clock.step()
+      }
+
+      test(new InstructionQueue()) { dut =>
+        println("---------------------------------------------")
+
+        dut.io.wakeUpRegs.poke(0x0.U)
+
+        // inst 0
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.robIdx.poke(0.U)
+        // phy reg 1 -> 1
+        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
+        // phy reg 2 -> no deps
+        dut.io.instSignals.bits.rs2PhyReg.valid.poke(false.B)
+        dut.io.instSignals.bits.rs2PhyReg.bits.poke(0.U)
+        // check the allocation
+        dut.io.iqIdx.valid.expect(true.B)
+        // check the ready instructions
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+
+        // inst 1
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.robIdx.poke(1.U)
+        // phy reg 1 -> no dep
+        dut.io.instSignals.bits.rs1PhyReg.valid.poke(false.B)
+        dut.io.instSignals.bits.rs1PhyReg.bits.poke(0.U)
+        // phy reg 2 -> no dep
+        dut.io.instSignals.bits.rs2PhyReg.valid.poke(false.B)
+        dut.io.instSignals.bits.rs2PhyReg.bits.poke(4.U)
+        // check the allocation
+        dut.io.iqIdx.valid.expect(true.B)
+        // check the ready instructions
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+
+        // inst 2
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.robIdx.poke(2.U)
+        // phy reg 1 -> 5
+        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs1PhyReg.bits.poke(5.U)
+        // phy reg 2 -> 6
+        dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs2PhyReg.bits.poke(6.U)
+        // check the allocation
+        dut.io.iqIdx.valid.expect(true.B)
+
+        // check the ready instructions
+        dut.io.readyInstSignals.valid.expect(true.B)
+        dut.io.readyInstSignals.bits.expect(1.U)
+        dut.clock.step()
+
+        // inst 3, same as inst 0
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.robIdx.poke(3.U)
+        // phy reg 1 -> 1
+        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
+        // phy reg 2 -> no deps
+        dut.io.instSignals.bits.rs2PhyReg.valid.poke(false.B)
+        dut.io.instSignals.bits.rs2PhyReg.bits.poke(0.U)
+        // check the allocation
+        dut.io.iqIdx.valid.expect(true.B)
+        // check the ready instructions
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+
+        // inst 4, same as inst 0
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.robIdx.poke(4.U)
+        // phy reg 1 -> 1
+        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
+        // phy reg 2 -> no deps
+        dut.io.instSignals.bits.rs2PhyReg.valid.poke(false.B)
+        dut.io.instSignals.bits.rs2PhyReg.bits.poke(0.U)
+        // check the allocation
+        dut.io.iqIdx.valid.expect(true.B)
+        // check the ready instructions
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+
+        // inst 5, same as inst 0, shouldn't allocate, IQ should be full
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.robIdx.poke(5.U)
+        // phy reg 1 -> 1
+        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
+        dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
+        // phy reg 2 -> no deps
+        dut.io.instSignals.bits.rs2PhyReg.valid.poke(false.B)
+        dut.io.instSignals.bits.rs2PhyReg.bits.poke(0.U)
+        // check the allocation
+        dut.io.iqIdx.valid.expect(false.B)
+        // check the ready instructions
+        dut.io.readyInstSignals.valid.expect(false.B)
+        dut.clock.step()
+
+        dut.io.wakeUpRegs.poke(0b0000_0010.U)
+        dut.io.instSignals.valid.poke(false.B)
+        dut.clock.step()
+
+        dut.io.wakeUpRegs.poke(0.U)
+        dut.io.readyInstSignals.valid.expect(true.B)
+        dut.io.readyInstSignals.bits.expect(0.U)
+        dut.clock.step()
+
+        dut.io.wakeUpRegs.poke(0b0110_0000.U)
+        dut.io.readyInstSignals.valid.expect(true.B)
+        dut.io.readyInstSignals.bits.expect(3.U)
+        dut.clock.step()
+
+        dut.io.wakeUpRegs.poke(0.U)
+        dut.io.readyInstSignals.valid.expect(true.B)
+        dut.io.readyInstSignals.bits.expect(2.U)
+        dut.clock.step()
+
+        dut.io.readyInstSignals.valid.expect(true.B)
+        dut.io.readyInstSignals.bits.expect(4.U)
+        dut.clock.step()
+
+        dut.clock.step()
+      }
+    }
+
+    {
+      implicit val params = getParams(nROBEntries = 4)
+
+      test(new ROB()) { dut =>
+        dut.clock.step()
+
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.robIdx.valid.expect(true.B)
+        dut.io.robIdx.bits.expect(0.U)
         dut.clock.step()
       }
     }

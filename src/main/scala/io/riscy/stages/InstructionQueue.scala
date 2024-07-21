@@ -3,7 +3,7 @@ package io.riscy.stages
 import chisel3.util.{PriorityMux, Valid, isPow2, log2Ceil}
 import chisel3.{Bool, Bundle, DontCare, Input, Mem, Module, Mux, Output, PrintableHelper, RegInit, UInt, Vec, VecInit, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.stages.InstructionQueue.{getMapIdx, getMapIdxH}
-import io.riscy.stages.signals.{IQSignals, Parameters}
+import io.riscy.stages.signals.Parameters
 
 class InstructionQueue()(implicit val params: Parameters) extends Module {
   val nPhyRegs = params.nPhyRegs
@@ -14,12 +14,19 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
   assert(isPow2(nPhyRegs))
 
   val io = IO(new Bundle {
-    val wakeUpRegs = Input(UInt(nPhyRegs.W))
+    // issue
     val instSignals = Input(Valid(new Bundle {
       val robIdx = UInt(log2Ceil(nROBEntries).W)
       val rs1PhyReg = Valid(UInt(log2Ceil(nPhyRegs).W))
       val rs2PhyReg = Valid(UInt(log2Ceil(nPhyRegs).W))
     }))
+    // True when instSignals is valid and the instruction is queued successfully
+    val iqIdx = Output(Valid(UInt(log2Ceil(nEntries).W)))
+
+    // wake up
+    val wakeUpRegs = Input(UInt(nPhyRegs.W))
+
+    // dispatch
     val readyInstSignals = Output(Valid(UInt(log2Ceil(nROBEntries).W)))
   })
 
@@ -82,15 +89,19 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
     val deps = VecInit(Seq.tabulate(nPhyRegs) { reg => map(getMapIdx(reg, e, nEntriesLog)) })
     val depPending = deps.reduceTree(_ | _)
 
-    // todo: Don't return stations which didn't allocate yet
     readyInsts(e) := !depPending & allocations(e)
   }
 
   val nextMapMask = Wire(UInt((nPhyRegs * nEntries).W))
 
+  val nextAllocationsIntermediate = Wire(UInt(nEntries.W))
+  val nextAllocations = Wire(UInt(nEntries.W))
+
   when(readyInstIdx.valid) {
     printf(cf"Freeing idx: ${readyInstIdx.bits}\n")
-    allocations := allocations & (~(1.U << readyInstIdx.bits)).asUInt
+    nextAllocationsIntermediate := allocations & (~(1.U << readyInstIdx.bits)).asUInt
+  }.otherwise {
+    nextAllocationsIntermediate := allocations
   }
 
   when(io.instSignals.valid && freeStationIdx.valid) {
@@ -99,7 +110,7 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
     printf(cf"allocating ${io.instSignals} @ idx: $stationIdx\n")
 
     stations(stationIdx) := io.instSignals.bits.robIdx
-    allocations := allocations | (1.U << stationIdx).asUInt
+    nextAllocations := nextAllocationsIntermediate | (1.U << stationIdx).asUInt
 
     // only depend if the register needs to be ready actually
     val rs1Mask = Wire(UInt((nPhyRegs * nEntries).W))
@@ -118,9 +129,14 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
     }
 
     nextMapMask := rs1Mask | rs2Mask
+    io.iqIdx.valid := true.B
+    io.iqIdx.bits := stationIdx
   }.otherwise {
     printf(cf"Not allocating freeStationIdx: $freeStationIdx\n")
     nextMapMask := 0.U
+    nextAllocations := nextAllocationsIntermediate
+    io.iqIdx.valid := false.B
+    io.iqIdx.bits := DontCare
   }
 
   for (r <- 0 until nPhyRegs) {
@@ -130,6 +146,9 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
     }
   }
 
+  allocations := nextAllocations
+
+  printf(cf"allocations: |$allocations%b|\n")
   printf(cf"readyInsts: $readyInsts\n")
   printf(cf"readyInstIdx: $readyInstIdx\n")
   printf(cf"\n")

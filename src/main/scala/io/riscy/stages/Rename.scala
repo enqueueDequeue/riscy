@@ -31,6 +31,7 @@ class Rename()(implicit val params: Parameters) extends Module {
   // right after reset
   // freeRegIdx = 0 => PhyReg1 is free
   // adding 1 to avoid overflow
+  // todo: Maybe do this like the IQ class?
   val freeRegIdx = RegInit(0.U(log2Ceil(nPhyRegs + 1).W))
   val freeRegs = RegInit(VecInit(Seq.tabulate(nPhyRegs) { _.U(nPhyRegs.W) }))
 

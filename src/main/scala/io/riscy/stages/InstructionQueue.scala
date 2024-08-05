@@ -20,6 +20,7 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
       val rs1PhyReg = Valid(UInt(log2Ceil(nPhyRegs).W))
       val rs2PhyReg = Valid(UInt(log2Ceil(nPhyRegs).W))
     }))
+
     // True when instSignals is valid and the instruction is queued successfully
     val iqIdx = Output(Valid(UInt(log2Ceil(nEntries).W)))
 

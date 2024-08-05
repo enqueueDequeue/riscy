@@ -2,27 +2,51 @@ package io.riscy.stages
 
 import chisel3.util.{Valid, isPow2, log2Ceil}
 import chisel3.{Bool, Bundle, DontCare, Input, Mem, Module, Output, PrintableHelper, RegInit, UInt, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.stages.signals.{Parameters, ROBSignals}
+import io.riscy.stages.signals.{DecodeSignals, FetchSignals, Parameters, RenameSignals}
 
 class ROB()(implicit val params: Parameters) extends Module {
+
+  class Signals()(implicit params: Parameters) extends Bundle {
+    val addrWidth = params.addrWidth
+
+    val pc = UInt(addrWidth.W)
+    val fetchSignals = FetchSignals()
+    val decodeSignals = DecodeSignals()
+    val renameSignals = RenameSignals()
+  }
+
+  object Signals {
+    def apply()(implicit params: Parameters): Signals = {
+      new Signals()
+    }
+  }
+
   val nROBEntries = params.nROBEntries
+  val nIQEntries = params.nIQEntries
 
   require(isPow2(nROBEntries))
 
   val io = IO(new Bundle {
     // instruction allocation
-    val instSignals = Input(Valid(ROBSignals()))
+    val instSignals = Input(Valid(Signals()))
     val robIdx = Output(Valid(UInt(log2Ceil(nROBEntries).W)))
+
+    // IQ update
+    // todo: get this working
+    val iqRobIdx = Input(Valid(new Bundle {
+      val robIdx = UInt(log2Ceil(nROBEntries).W)
+      val iqIdx = UInt(log2Ceil(nIQEntries).W)
+    }))
 
     // instruction dispatch
     val readRobIdx = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
-    val robData = Output(Valid(ROBSignals()))
+    val robData = Output(Valid(Signals()))
 
     // instruction commit
     val commitRobIdx = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
 
     // instruction retire
-    val retireInst = Output(Valid(ROBSignals()))
+    val retireInst = Output(Valid(Signals()))
   })
 
   // everything between robHead and robTail are
@@ -35,7 +59,7 @@ class ROB()(implicit val params: Parameters) extends Module {
   val robTail = RegInit(0.U(log2Ceil(nROBEntries).W))
   val entries = Mem(nROBEntries, Valid(new Bundle {
     val committed = Bool()
-    val data = ROBSignals()
+    val data = Signals()
   }))
 
   val canAllocate = robHead =/= (robTail + 1.U)

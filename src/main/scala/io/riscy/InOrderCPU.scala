@@ -3,24 +3,22 @@ package io.riscy
 import chisel3.util.Decoupled
 import chisel3.{Bundle, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.stages.signals.Parameters
+import io.riscy.stages.signals.Utils.NOP
 import io.riscy.stages.{Decode, Execute, Fetch, Memory, PhyRegs, WriteBack}
 
 class InOrderCPU()(implicit val params: Parameters) extends Module {
   // The magic instruction
   // Decode to find why this is the NOP
-  val NOP = 0x33
-
   val bitWidth = params.bitWidth
   val nArchRegs = params.nArchRegs
   val addrWidth = params.addrWidth
   val dataWidth = params.dataWidth
-  val instWidth = 32
+  val instWidth = params.instWidth
 
   val io = IO(new Bundle {
     val iReadAddr = Decoupled(UInt(addrWidth.W))
     val iReadValue = Flipped(Decoupled(UInt(instWidth.W)))
 
-    // todo: make these decoupled
     val dReadLen = Output(UInt((dataWidth / bitWidth).W))
     val dReadAddr = Output(UInt(addrWidth.W))
     val dReadValue = Input(UInt(dataWidth.W))
@@ -69,12 +67,15 @@ class InOrderCPU()(implicit val params: Parameters) extends Module {
   phyRegs.io.rd := decode.io.signals.rd
   phyRegs.io.rdEn := decode.io.signals.regWrite
 
+  val rs1Value = Mux(decode.io.signals.rs1 === 0.U, 0.U, phyRegs.io.rs1Value)
+  val rs2Value = Mux(decode.io.signals.rs2 === 0.U, 0.U, phyRegs.io.rs2Value)
+
   // execute
   execute.io.word := decode.io.signals.word
   execute.io.op := decode.io.signals.aluOp
   execute.io.branchInvert := decode.io.signals.branchInvert
-  execute.io.a := Mux(decode.io.signals.rs1Pc, pc, phyRegs.io.rs1Value)
-  execute.io.b := Mux(decode.io.signals.rs2Imm, decode.io.signals.immediate, phyRegs.io.rs2Value)
+  execute.io.a := Mux(decode.io.signals.rs1Pc, pc, rs1Value)
+  execute.io.b := Mux(decode.io.signals.rs2Imm, decode.io.signals.immediate, rs2Value)
 
   // memory
   memory.io.address := execute.io.result

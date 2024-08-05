@@ -115,7 +115,7 @@ object Main {
         dut.clock.step()
 
         dut.io.rs1.poke(0.U)
-        dut.io.rs1Value.expect(0.U)
+        dut.io.rs1Value.expect(41.U)
       }
     }
 
@@ -174,31 +174,37 @@ object Main {
         dut.io.rs2.poke(0.U)
 
         // renaming arch register register
-        dut.io.rd.poke(1.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.poke(1.U)
         dut.io.rdPhyReg.valid.expect(true.B)
         dut.io.rdPhyReg.bits.expect(0.U)
         dut.clock.step()
 
-        dut.io.rd.poke(1.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.poke(1.U)
         dut.io.rdPhyReg.valid.expect(true.B)
         dut.io.rdPhyReg.bits.expect(1.U)
         dut.clock.step()
 
-        dut.io.rd.poke(3.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.poke(3.U)
         dut.io.rdPhyReg.valid.expect(true.B)
         dut.io.rdPhyReg.bits.expect(2.U)
         dut.clock.step()
 
-        dut.io.rd.poke(4.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.poke(4.U)
         dut.io.rdPhyReg.valid.expect(true.B)
         dut.io.rdPhyReg.bits.expect(3.U)
         dut.clock.step()
 
-        dut.io.rd.poke(5.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.poke(5.U)
         dut.io.rdPhyReg.valid.expect(false.B)
         dut.clock.step()
 
-        dut.io.rd.poke(6.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.poke(6.U)
         dut.io.rdPhyReg.valid.expect(false.B)
         dut.clock.step()
 
@@ -207,7 +213,8 @@ object Main {
         dut.io.commit.valid.poke(true.B)
         dut.io.commit.bits.archReg.poke(1.U)
         dut.io.commit.bits.phyReg.poke(0.U)
-        dut.io.rd.poke(6.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.poke(6.U)
         dut.io.rdPhyReg.valid.expect(false.B)
         dut.clock.step()
 
@@ -216,12 +223,14 @@ object Main {
         dut.io.commit.valid.poke(true.B)
         dut.io.commit.bits.archReg.poke(1.U)
         dut.io.commit.bits.phyReg.poke(1.U)
-        dut.io.rd.poke(7.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.poke(7.U)
         dut.io.rdPhyReg.valid.expect(false.B)
         dut.clock.step()
 
         dut.io.commit.valid.poke(false.B)
-        dut.io.rd.poke(7.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.poke(7.U)
         dut.io.rdPhyReg.valid.expect(true.B)
         dut.io.rdPhyReg.bits.expect(0.U)
         dut.clock.step()
@@ -230,7 +239,8 @@ object Main {
         dut.io.rs2.poke(3.U)
         dut.io.rs1PhyReg.expect(1.U)
         dut.io.rs2PhyReg.expect(2.U)
-        dut.io.rd.poke(8.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.poke(8.U)
         dut.io.rdPhyReg.valid.expect(false.B)
 
         println(s"Renaming test completed")

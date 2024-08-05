@@ -1,10 +1,11 @@
 package io.riscy
 
 import chisel3.util.Decoupled
-import chisel3.{Bool, Bundle, Data, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.InOrderPipelinedCPU.{NOP, PC_INIT, forward, initDecodeSignals, initExecuteSignals, initFetchSignals, initMemorySignals, initRegReadSignals, initStage, killDecodeSignals, killFetchSignals}
-import io.riscy.stages.{Decode, Execute, ExecuteOp, Fetch, MemRWSize, Memory, PhyRegs, WriteBack}
+import chisel3.{Bool, Bundle, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
+import io.riscy.InOrderPipelinedCPU.forward
+import io.riscy.stages.{Decode, Execute, Fetch, Memory, PhyRegs, WriteBack}
 import io.riscy.stages.signals.{DecodeSignals, ExecuteSignals, FetchSignals, MemorySignals, Parameters, RegReadSignals, Stage, WriteBackSignals}
+import io.riscy.stages.signals.Utils.{NOP, PC_INIT, initDecodeSignals, initExecuteSignals, initFetchSignals, initMemorySignals, initRegReadSignals, initStage, killDecodeSignals, killFetchSignals}
 
 /**
  * An InOrder 6 Stage Processor
@@ -34,6 +35,7 @@ class InOrderPipelinedCPU()(implicit val params: Parameters) extends Module {
     val initSignals = Wire(Stage(new Bundle {
       val fetch = FetchSignals()
     }))
+
     initStage(initSignals)
     initFetchSignals(initSignals.stage.fetch)
     initSignals
@@ -308,64 +310,6 @@ class InOrderPipelinedCPU()(implicit val params: Parameters) extends Module {
 object InOrderPipelinedCPU {
   // The magic NOP
   // Decode to find why this is the NOP
-  val NOP = 0x33
-  val PC_INIT = 0
-
-  private def initStage[T <: Data](stage: Stage[T]) = {
-    stage.pc := PC_INIT.U
-  }
-
-  private def initFetchSignals(fetchSignals: FetchSignals) = {
-    fetchSignals.instruction.valid := false.B
-    fetchSignals.instruction.bits := NOP.U
-  }
-
-  private def initDecodeSignals(decodeSignals: DecodeSignals) = {
-    decodeSignals.jump := false.B
-    decodeSignals.branch := false.B
-    decodeSignals.memToReg := false.B
-    decodeSignals.memRead := MemRWSize.BYTES_NO
-    decodeSignals.memWrite := MemRWSize.BYTES_NO
-    decodeSignals.rs1Pc := false.B
-    decodeSignals.rs2Imm := false.B
-    decodeSignals.regWrite := false.B
-    decodeSignals.branchInvert := false.B
-    decodeSignals.aluOp := ExecuteOp.NOP
-    decodeSignals.immediate := false.B
-    decodeSignals.rs1 := 0.U
-    decodeSignals.rs2 := 0.U
-    decodeSignals.rd := 0.U
-    decodeSignals.word := false.B
-  }
-
-  private def initRegReadSignals(regReadSignals: RegReadSignals) = {
-    regReadSignals.rs1Value := 0.U
-    regReadSignals.rs2Value := 0.U
-  }
-
-  private def initExecuteSignals(executeSignals: ExecuteSignals) = {
-    executeSignals.nextPc := PC_INIT.U
-    executeSignals.result := 0.U
-    executeSignals.zero := false.B
-  }
-
-  private def initMemorySignals(memorySignals: MemorySignals) = {
-    memorySignals.readData := 0.U
-  }
-
-  private def killFetchSignals(fetchSignals: FetchSignals) = {
-    fetchSignals.instruction.valid := false.B
-    fetchSignals.instruction.bits := NOP.U
-  }
-
-  private def killDecodeSignals(decodeSignals: DecodeSignals) = {
-    decodeSignals.memRead := MemRWSize.BYTES_NO
-    decodeSignals.memWrite := MemRWSize.BYTES_NO
-    decodeSignals.regWrite := false.B
-    decodeSignals.branch := false.B
-    decodeSignals.jump := false.B
-    decodeSignals.rd := 0.U
-  }
 
   /**
    * forward the values appropriately

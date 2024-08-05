@@ -20,8 +20,8 @@ class PhyRegs()(implicit val params: Parameters) extends Module {
 
   val regs = Mem(nPhyRegs, UInt(dataWidth.W))
 
-  io.rs1Value := Mux(io.rs1 === 0.U, 0.U, regs(io.rs1))
-  io.rs2Value := Mux(io.rs2 === 0.U, 0.U, regs(io.rs2))
+  io.rs1Value := regs(io.rs1)
+  io.rs2Value := regs(io.rs2)
 
   when(io.rdEn) {
     regs(io.rd) := io.rdValue

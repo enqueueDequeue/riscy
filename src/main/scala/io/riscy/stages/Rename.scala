@@ -13,7 +13,7 @@ class Rename()(implicit val params: Parameters) extends Module {
   val io = IO(new Bundle {
     val rs1 = Input(UInt(log2Ceil(nArchRegs).W))
     val rs2 = Input(UInt(log2Ceil(nArchRegs).W))
-    val rd = Input(UInt(log2Ceil(nArchRegs).W))
+    val rd = Input(Valid(UInt(log2Ceil(nArchRegs).W)))
 
     val rs1PhyReg = Output(UInt(log2Ceil(nPhyRegs).W))
     val rs2PhyReg = Output(UInt(log2Ceil(nPhyRegs).W))
@@ -73,7 +73,7 @@ class Rename()(implicit val params: Parameters) extends Module {
     retirementRat(io.commit.bits.archReg).bits := io.commit.bits.phyReg
   }
 
-  when(freeRegIdx < nPhyRegs.U) {
+  when(freeRegIdx < nPhyRegs.U && io.rd.valid) {
     val phyReg = freeRegs(actFreeRegIdx)
 
     printf(cf"Allocating p$phyReg <- a${io.rd} @ $freeRegIdx\n")
@@ -81,11 +81,11 @@ class Rename()(implicit val params: Parameters) extends Module {
     io.rdPhyReg.valid := true.B
     io.rdPhyReg.bits := phyReg
 
-    rat(io.rd) := phyReg
+    rat(io.rd.bits) := phyReg
 
     freeRegIdx := freeRegIdx + 1.U
   }.otherwise {
-    printf(cf"Cannot allocate for a${io.rd}\n")
+    printf(cf"Cannot allocate for ${io.rd}\n")
 
     assert(freeRegIdx === nPhyRegs.U, "freeRegIdx cannot be anything else")
 

@@ -59,6 +59,7 @@ class ROB()(implicit val params: Parameters) extends Module {
   val robTail = RegInit(0.U(log2Ceil(nROBEntries).W))
   val entries = Mem(nROBEntries, Valid(new Bundle {
     val committed = Bool()
+    val flush = Bool()
     val data = Signals()
   }))
 
@@ -69,6 +70,7 @@ class ROB()(implicit val params: Parameters) extends Module {
 
     entries(robTail).valid := true.B
     entries(robTail).bits.committed := false.B
+    entries(robTail).bits.flush := false.B
     entries(robTail).bits.data := io.instSignals.bits
 
     io.robIdx.valid := true.B
@@ -108,12 +110,25 @@ class ROB()(implicit val params: Parameters) extends Module {
 
   // keep commiting the instructions in the case of O3
   when(entries(robHead).valid && entries(robHead).bits.committed) {
+    val nextRobHead = robHead + 1.U
+
     entries(robHead).valid := false.B
 
     io.retireInst.valid := true.B
     io.retireInst.bits := entries(robHead).bits.data
 
-    robHead := robHead + 1.U
+    // todo: completely figure how to flush
+    //  Need to copy the rrat to rat
+    //  need to update the IQ with the right values
+    //  (maybe mark all the entries as invalid?)
+    //  All the ldq and stq entries are invalid?
+    //  Update the target PC?
+
+    when(entries(robHead).bits.flush) {
+      robTail := nextRobHead
+    }
+
+    robHead := nextRobHead
   }.otherwise {
     io.retireInst.valid := false.B
     io.retireInst.bits := DontCare

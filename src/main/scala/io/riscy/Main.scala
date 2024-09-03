@@ -1,12 +1,12 @@
 package io.riscy
 
-import chisel3.{fromBooleanToLiteral, fromIntToLiteral, fromLongToLiteral, fromStringToLiteral}
+import chisel3.{Bundle, IO, Input, Module, Output, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, fromLongToLiteral, fromStringToLiteral}
 import chiseltest.RawTester.test
 import chiseltest.simulator.WriteVcdAnnotation
 import chiseltest.{VerilatorBackendAnnotation, testableBool, testableClock, testableData}
 import circt.stage.ChiselStage
 import io.riscy.stages.signals.Parameters
-import io.riscy.stages.{InstructionQueue, PhyRegs, ROB, Rename}
+import io.riscy.stages.{InstructionQueue, MemRWDirection, MemRWSize, MemoryO3, PhyRegs, ROB, Rename}
 
 import java.nio.charset.StandardCharsets
 import java.nio.file.{Files, Paths}
@@ -73,12 +73,15 @@ object Main {
                 addrWidth: Int = 64,
                 bitWidth: Int = 8,
                 nIQEntries: Int = 64,
-                nROBEntries: Int = 64): Parameters = {
-    Parameters(nArchRegs, nPhyRegs, instWidth, wordWidth, dataWidth, addrWidth, bitWidth, nIQEntries, nROBEntries)
+                nROBEntries: Int = 64,
+                nLDQEntries: Int = 32,
+                nSTQEntries: Int = 16): Parameters = {
+    Parameters(nArchRegs, nPhyRegs, instWidth, wordWidth, dataWidth, addrWidth, bitWidth, nIQEntries, nROBEntries, nLDQEntries, nSTQEntries)
   }
 
   def main(args: Array[String]): Unit = {
 
+    /*
     {
       implicit val params = getParams()
 
@@ -1132,6 +1135,133 @@ object Main {
         dut.io.instSignals.valid.poke(false.B)
         dut.clock.step()
       }
+    }
+    */
+
+    {
+      // address & data width
+      val adW = 64
+      // bit width
+      val bw = 8
+      // # bytes in data
+      val db = adW / bw
+
+      test(new Module {
+        val io = IO(new Bundle {
+          val in = Input(UInt(adW.W))
+          val out = Output(UInt(adW.W))
+        })
+
+        io.out := MemoryO3.align(io.in, bw)
+      }) { dut =>
+        dut.io.in.poke(68.U)
+        dut.io.out.expect(64.U)
+      }
+
+      test(new Module {
+        val io = IO(new Bundle {
+          val addr = Input(UInt(adW.W))
+          val data = Input(UInt(adW.W))
+          val rwSize = Input(MemRWSize())
+          val dataOut = Output(UInt(adW.W))
+        })
+
+        io.dataOut := MemoryO3.readData(io.data, io.addr, io.rwSize, db, bw)
+      }) { dut =>
+        dut.io.data.poke(0x01020384050607L.U)
+
+        dut.io.addr.poke(66.U)
+        dut.io.rwSize.poke(MemRWSize.BYTES_2U)
+        dut.io.dataOut.expect(0x8405.U)
+
+        dut.io.addr.poke(67.U)
+        dut.io.rwSize.poke(MemRWSize.BYTES_1U)
+        dut.io.dataOut.expect(0x84.U)
+
+        dut.io.addr.poke(64.U)
+        dut.io.rwSize.poke(MemRWSize.BYTES_4U)
+        dut.io.dataOut.expect(0x0000000084050607L.U)
+
+        dut.io.addr.poke(64.U)
+        dut.io.rwSize.poke(MemRWSize.BYTES_4S)
+        dut.io.dataOut.expect("xFFFFFFFF84050607".U)
+
+        dut.io.addr.poke(64.U)
+        dut.io.rwSize.poke(MemRWSize.BYTES_8U)
+
+        dut.io.dataOut.expect(0x01020384050607L.U)
+      }
+
+      test(new Module {
+        val io = IO(new Bundle {
+          val addr = Input(UInt(adW.W))
+          val data = Input(UInt(adW.W))
+          val rwSize = Input(MemRWSize())
+          val dataOut = Output(UInt(adW.W))
+          val maskOut = Output(UInt(db.W))
+        })
+
+        io.dataOut := MemoryO3.writeData(io.data, io.addr, io.rwSize, db, bw)
+        io.maskOut := MemoryO3.mask(io.addr, io.rwSize, db)
+      }) { dut =>
+        dut.io.addr.poke(70.U)
+        dut.io.data.poke(0x0607.U)
+        dut.io.rwSize.poke(MemRWSize.BYTES_2S)
+
+        dut.io.maskOut.expect(0b11_00_00_00.U)
+        dut.io.dataOut.expect(0x0607_0000_0000_0000L.U)
+
+        dut.io.addr.poke(64.U)
+        dut.io.data.poke(0x0607.U)
+        dut.io.rwSize.poke(MemRWSize.BYTES_8S)
+
+        dut.io.maskOut.expect(0b11_11_11_11.U)
+        dut.io.dataOut.expect(0x0000_0000_0000_0607L.U)
+
+        dut.io.addr.poke(68.U)
+        dut.io.data.poke(0x0607.U)
+        dut.io.rwSize.poke(MemRWSize.BYTES_4S)
+
+        dut.io.maskOut.expect(0b11_11_00_00.U)
+        dut.io.dataOut.expect(0x0000_0607_0000_0000L.U)
+      }
+    }
+
+    {
+      implicit val params = getParams()
+
+      test(new MemoryO3()) { dut =>
+        dut.io.allocate.valid.poke(true.B)
+
+        dut.io.allocate.bits.poke(MemRWDirection.read)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.idx.expect(0.U)
+
+        dut.clock.step()
+
+        dut.io.allocate.bits.poke(MemRWDirection.write)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.idx.expect(0.U)
+
+        dut.clock.step()
+
+        dut.io.allocate.bits.poke(MemRWDirection.read)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.idx.expect(1.U)
+
+        dut.clock.step()
+
+        dut.io.allocate.bits.poke(MemRWDirection.write)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.idx.expect(1.U)
+
+        dut.clock.step()
+
+        dut.io.allocate.valid.poke(false.B)
+        dut.io.allocatedIdx.valid.expect(false.B)
+      }
+
+      // todo: add more test cases maybe?
     }
 
     println("Compiling")

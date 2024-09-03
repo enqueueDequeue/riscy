@@ -8,4 +8,6 @@ case class Parameters(nArchRegs: Int,
                       addrWidth: Int,
                       bitWidth: Int,
                       nIQEntries: Int,
-                      nROBEntries: Int)
+                      nROBEntries: Int,
+                      nLDQEntries: Int,
+                      nSTQEntries: Int)

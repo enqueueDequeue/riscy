@@ -1,10 +1,10 @@
 package io.riscy
 
-import chisel3.util.{Decoupled, Valid}
-import chisel3.{Bundle, DontCare, Flipped, Module, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, when}
+import chisel3.util.{Decoupled, Valid, log2Ceil}
+import chisel3.{Bundle, DontCare, Flipped, Module, Mux, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, when}
 import io.riscy.stages.signals.Utils.{NOP, PC_INIT, initDecodeSignals, initFetchSignals, initRenameSignals, initRobSignals, initStage}
-import io.riscy.stages.signals.{DecodeSignals, FetchSignals, Parameters, ROBSignals, RenameSignals, Stage}
-import io.riscy.stages.{Decode, Execute, Fetch, InstructionQueue, Memory, PhyRegs, ROB, Rename}
+import io.riscy.stages.signals.{DecodeSignals, ExecuteSignals, FetchSignals, Parameters, ROBSignals, RegReadSignals, RenameSignals, Stage}
+import io.riscy.stages.{Decode, Execute, Fetch, InstructionQueue, Memory, MemoryO3, PhyRegs, ROB, Rename}
 
 class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   val addrWidth = params.addrWidth
@@ -17,19 +17,21 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
     val iReadValue = Flipped(Decoupled(UInt(params.instWidth.W)))
 
     val dMem = Decoupled(new Bundle {
-      val read = Valid(new Bundle {
-        val len = UInt((params.dataWidth / params.bitWidth).W)
-        val addr = UInt(params.addrWidth.W)
-      })
+      val addr = UInt(addrWidth.W)
+      val size = UInt(log2Ceil(params.dataWidth / params.bitWidth).W)
 
+      // If write is valid
+      // Then operation is treated as write
+      // Else
+      // It's treated as read
       val write = Valid(new Bundle {
-        val len = UInt((params.dataWidth / params.bitWidth).W)
-        val addr = UInt(params.addrWidth.W)
+        val mask = UInt((params.dataWidth / params.bitWidth).W)
         val value = UInt(params.dataWidth.W)
       })
     })
 
-    val dMemRead = Flipped(Decoupled(new Bundle {
+    val dMemAck = Flipped(Decoupled(new Bundle {
+      val size = UInt(log2Ceil(params.dataWidth / params.bitWidth).W)
       val value = UInt(params.dataWidth.W)
     }))
   })
@@ -82,6 +84,24 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
     initSignals
   })
 
+  val iqRRSignals = RegInit({
+    val initSignals = Wire(Stage(new Bundle {
+      val rob = ROBSignals()
+    }))
+    initStage(initSignals)
+    initRobSignals(initSignals.stage.rob)
+    initSignals
+  })
+
+  val rrExSignals = RegInit({
+    val initSignals = Wire(Stage(new Bundle {
+      val decode = DecodeSignals()
+      val regRead = RegReadSignals()
+    }))
+    initStage(initSignals)
+    initSignals
+  })
+
   // Fetch
   val fetch = Module(new Fetch())
 
@@ -117,6 +137,10 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   idRenameSignals.pc := ifIdSignals.pc
   idRenameSignals.stage.fetch := ifIdSignals.stage.fetch
   idRenameSignals.stage.decode := decode.io.signals
+
+  // Allocations
+  // todo: Allocate Phy Reg, ROB, IQ, LDQ/STQ here itself
+  //  if allocation fails, then stall
 
   // Rename
   val rename = Module(new Rename())
@@ -163,22 +187,55 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   iq.io.instSignals.bits.rs2PhyReg.bits := robIqSignals.stage.rename.rs2PhyReg
   iq.io.instSignals.bits.robIdx := robIqSignals.stage.rob.robIdx.bits
 
-  // iq output
-  // update the rob
-  // todo: complete this
-  iq.io.iqIdx.valid
-  iq.io.iqIdx.bits
+  // todo: make sure to stall/back propagate
+  //  when iq fails to allocate
+  // Update back to the rob
+  rob.io.iqRobIdx.valid := iq.io.iqIdx.valid
+  rob.io.iqRobIdx.bits.iqIdx := iq.io.iqIdx.bits
+  rob.io.iqRobIdx.bits.robIdx := robIqSignals.stage.rob.robIdx.bits
 
-  iq.io.readyInstSignals.valid
+  // todo: assign the wakeup regs
+
+  // todo: is this the right pc?
+  iqRRSignals.pc := robIqSignals.pc
+  iqRRSignals.stage.rob.robIdx.valid := iq.io.readyInstSignals.valid
+  iqRRSignals.stage.rob.robIdx.bits := iq.io.readyInstSignals.bits
 
   // Reg Read
   val registers = Module(new PhyRegs())
 
+  rob.io.readRobIdx := iqRRSignals.stage.rob.robIdx
+
+  registers.io.rs1 := rob.io.robData.bits.decodeSignals.rs1
+  registers.io.rs2 := rob.io.robData.bits.decodeSignals.rs2
+
+  // todo: is this the right pc?
+  //  or should you use rob signal pc instead?
+  val rs1Value = Mux(rob.io.robData.bits.decodeSignals.rs1Pc, iqRRSignals.pc, registers.io.rs1Value)
+  val rs2Value = Mux(rob.io.robData.bits.decodeSignals.rs2Imm, rob.io.robData.bits.decodeSignals.immediate, registers.io.rs2Value)
+
+  rrExSignals.pc := iqRRSignals.pc
+  rrExSignals.stage.regRead.rs1Value := rs1Value
+  rrExSignals.stage.regRead.rs2Value := rs2Value
+  rrExSignals.stage.decode := rob.io.robData.bits.decodeSignals
+
+  // Running Execute and Memory stages in parallel
+
   // Execute
   val execute = Module(new Execute())
 
+  execute.io.a := rrExSignals.stage.regRead.rs1Value
+  execute.io.b := rrExSignals.stage.regRead.rs2Value
+  execute.io.branchInvert := rrExSignals.stage.decode.branchInvert
+  execute.io.word := rrExSignals.stage.decode.word
+  execute.io.op := rrExSignals.stage.decode.aluOp
+
   // Memory
-  val memory = Module(new Memory())
+  val memory = Module(new MemoryO3())
+
+  // generate the address
 
   // Commit
+
+  // branch updates/flushing
 }

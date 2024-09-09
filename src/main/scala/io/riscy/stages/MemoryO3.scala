@@ -71,7 +71,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 
     val readData = Input(Valid(new Bundle {
       val ldIdx = UInt(log2Ceil(nLdQEntries).W)
-      val dstReg = UInt(log2Ceil(nPhyRegs).W)
+      val dstReg = Valid(UInt(log2Ceil(nPhyRegs).W))
       val robIdx = UInt(log2Ceil(nROBEntries).W)
       val address = UInt(addrWidth.W)
       val size = Input(MemRWSize())
@@ -85,7 +85,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     }))
 
     val readDataOut = Output(Valid(new Bundle {
-      val dstReg = UInt(log2Ceil(nPhyRegs).W)
+      val dstReg = Valid(UInt(log2Ceil(nPhyRegs).W))
       val data = UInt(dataWidth.W)
     }))
 
@@ -223,8 +223,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     loadQueue(ldIdx).size := size
     loadQueue(ldIdx).address.valid := true.B
     loadQueue(ldIdx).address.bits := address
-    loadQueue(ldIdx).dstReg.valid := true.B
-    loadQueue(ldIdx).dstReg.bits := dstReg
+    loadQueue(ldIdx).dstReg := dstReg
     loadQueue(ldIdx).robIdx.valid := true.B
     loadQueue(ldIdx).robIdx.bits := robIdx
     loadQueue(ldIdx).mask.valid := true.B
@@ -431,10 +430,9 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     readOutIdx.valid := false.B
 
     assert(loadQueue(readOutIdx.bits).data.valid)
-    assert(loadQueue(readOutIdx.bits).dstReg.valid)
 
     io.readDataOut.valid := true.B
-    io.readDataOut.bits.dstReg := loadQueue(readOutIdx.bits).dstReg.bits
+    io.readDataOut.bits.dstReg := loadQueue(readOutIdx.bits).dstReg
 
     io.readDataOut.bits.data := readData(loadQueue(readOutIdx.bits).data.bits,
                                           loadQueue(readOutIdx.bits).address.bits,

@@ -16,6 +16,9 @@ class PhyRegs()(implicit val params: Parameters) extends Module {
     val rs1Value = Output(UInt(dataWidth.W))
     val rs2Value = Output(UInt(dataWidth.W))
     val rdValue = Input(UInt(dataWidth.W))
+    val rd2En = Input(Bool())
+    val rd2 = Input(UInt(log2Ceil(nPhyRegs).W))
+    val rd2Value = Input(UInt(dataWidth.W))
   })
 
   val regs = Mem(nPhyRegs, UInt(dataWidth.W))
@@ -25,5 +28,9 @@ class PhyRegs()(implicit val params: Parameters) extends Module {
 
   when(io.rdEn) {
     regs(io.rd) := io.rdValue
+  }
+
+  when(io.rd2En) {
+    regs(io.rd2) := io.rd2Value
   }
 }

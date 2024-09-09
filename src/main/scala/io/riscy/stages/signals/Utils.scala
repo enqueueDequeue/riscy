@@ -1,14 +1,25 @@
 package io.riscy.stages.signals
 
-import chisel3.{Data, fromBooleanToLiteral, fromIntToLiteral}
+import chisel3.util.Valid
+import chisel3.{Data, DontCare, fromBooleanToLiteral, fromIntToLiteral}
 import io.riscy.stages.{ExecuteOp, MemRWSize}
 
 object Utils {
   val NOP = 0x33
   val PC_INIT = 0
 
+  def initStage[T <: Data](stage: Valid[Stage[T]]) = {
+    stage.valid := false.B
+    stage.bits.pc := PC_INIT.U
+  }
+
   def initStage[T <: Data](stage: Stage[T]) = {
     stage.pc := PC_INIT.U
+  }
+
+  def initValid[T <: Data](v: Valid[T]) = {
+    v.valid := false.B
+    v.bits := DontCare
   }
 
   def initFetchSignals(fetchSignals: FetchSignals) = {
@@ -39,11 +50,6 @@ object Utils {
     renameSignals.rs2PhyReg := 0.U
     renameSignals.rdPhyReg.valid := false.B
     renameSignals.rdPhyReg.bits := 0.U
-  }
-
-  def initRobSignals(robSignals: ROBSignals) = {
-    robSignals.robIdx.valid := false.B
-    robSignals.robIdx.bits := 0.U
   }
 
   def initRegReadSignals(regReadSignals: RegReadSignals) = {

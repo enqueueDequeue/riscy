@@ -223,6 +223,8 @@ class InOrderPipelinedCPU()(implicit val params: Parameters) extends Module {
     // In case of Jump instructions:
     // ALU calculates pc + imm. But, the results are always ignored
     // by the following mux. The nextPc computed will be used to set the PC
+    // PC + 4 is needed for writing to the destination register in case of returning
+    // back to the call site. Thus making the result (pc + 4).
     executeSignalsWire.nextPc := Mux(rrExSignals.stage.decode.jump, execute.io.result, rrExSignals.pc + rrExSignals.stage.decode.immediate)
     executeSignalsWire.result := Mux(rrExSignals.stage.decode.jump, rrExSignals.pc + 4.U, execute.io.result)
     executeSignalsWire.zero := execute.io.zero

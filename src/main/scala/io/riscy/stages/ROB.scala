@@ -2,51 +2,41 @@ package io.riscy.stages
 
 import chisel3.util.{Valid, isPow2, log2Ceil}
 import chisel3.{Bool, Bundle, DontCare, Input, Mem, Module, Output, PrintableHelper, RegInit, UInt, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.stages.signals.{DecodeSignals, FetchSignals, Parameters, RenameSignals}
+import io.riscy.stages.signals.{Parameters, ROBSignals}
 
 class ROB()(implicit val params: Parameters) extends Module {
-
-  class Signals()(implicit params: Parameters) extends Bundle {
-    val addrWidth = params.addrWidth
-
-    val pc = UInt(addrWidth.W)
-    val fetchSignals = FetchSignals()
-    val decodeSignals = DecodeSignals()
-    val renameSignals = RenameSignals()
-  }
-
-  object Signals {
-    def apply()(implicit params: Parameters): Signals = {
-      new Signals()
-    }
-  }
-
+  val instWidth = params.instWidth
   val nROBEntries = params.nROBEntries
   val nIQEntries = params.nIQEntries
 
   require(isPow2(nROBEntries))
 
   val io = IO(new Bundle {
-    // instruction allocation
-    val instSignals = Input(Valid(Signals()))
-    val robIdx = Output(Valid(UInt(log2Ceil(nROBEntries).W)))
+    // allocate
+    val allocate = Input(Bool())
+    val allocatedIdx = Output(Valid(UInt(log2Ceil(nROBEntries).W)))
 
-    // IQ update
-    // todo: get this working
-    val iqRobIdx = Input(Valid(new Bundle {
-      val robIdx = UInt(log2Ceil(nROBEntries).W)
-      val iqIdx = UInt(log2Ceil(nIQEntries).W)
+    // instruction allocation
+    val instSignals = Input(Valid(new Bundle {
+      val pc = UInt(instWidth.W)
+      val data = new ROBSignals()
     }))
 
     // instruction dispatch
     val readRobIdx = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
-    val robData = Output(Valid(Signals()))
+    val robData = Output(Valid(new Bundle {
+      val pc = UInt(instWidth.W)
+      val data = new ROBSignals()
+    }))
+
+    // flush
+    val flush = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
 
     // instruction commit
     val commitRobIdx = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
 
     // instruction retire
-    val retireInst = Output(Valid(Signals()))
+    val retireInst = Output(Valid(new ROBSignals()))
   })
 
   // everything between robHead and robTail are
@@ -60,36 +50,45 @@ class ROB()(implicit val params: Parameters) extends Module {
   val entries = Mem(nROBEntries, Valid(new Bundle {
     val committed = Bool()
     val flush = Bool()
-    val data = Signals()
+    val pc = UInt(instWidth.W)
+    val data = new ROBSignals()
   }))
 
   val canAllocate = robHead =/= (robTail + 1.U)
 
-  when(io.instSignals.valid && canAllocate) {
-    printf(cf"Allocating: head: $robHead, tail: $robTail, instSignals: ${io.instSignals}\n")
+  when(io.allocate && canAllocate) {
+    printf(cf"Allocating: head: $robHead, tail: $robTail\n")
 
-    entries(robTail).valid := true.B
-    entries(robTail).bits.committed := false.B
-    entries(robTail).bits.flush := false.B
-    entries(robTail).bits.data := io.instSignals.bits
-
-    io.robIdx.valid := true.B
-    io.robIdx.bits := robTail
+    io.allocatedIdx.valid := true.B
+    io.allocatedIdx.bits := robTail
 
     robTail := robTail + 1.U
   }.otherwise {
-    printf(cf"Didn't allocate: head: $robHead, tail: $robTail, instSignals.valid: ${io.instSignals.valid}\n")
+    printf(cf"Didn't allocate: head: $robHead, tail: $robTail, allocate: ${io.allocate}\n")
 
-    io.robIdx.valid := false.B
-    io.robIdx.bits := DontCare
+    io.allocatedIdx.valid := false.B
+    io.allocatedIdx.bits := DontCare
+  }
+
+  when(io.instSignals.valid) {
+    printf(cf"Storing instSignals: ${io.instSignals}\n")
+
+    val robIdx = io.instSignals.bits.data.robIdx
+
+    entries(robIdx).valid := true.B
+    entries(robIdx).bits.committed := false.B
+    entries(robIdx).bits.flush := false.B
+    entries(robIdx).bits.pc := io.instSignals.bits.pc
+    entries(robIdx).bits.data := io.instSignals.bits.data
   }
 
   when(io.readRobIdx.valid) {
-    assert(entries(io.robIdx.bits).valid, "input robIdx invalid")
-    assert(!entries(io.robIdx.bits).bits.committed, "Are you sure? you wanna read a committed instruction")
+    assert(entries(io.readRobIdx.bits).valid, "input robIdx invalid")
+    assert(!entries(io.readRobIdx.bits).bits.committed, "Are you sure? you wanna read a committed instruction")
 
     io.robData.valid := true.B
-    io.robData.bits := entries(io.robIdx.bits).bits.data
+    io.robData.bits.pc := entries(io.readRobIdx.bits).bits.pc
+    io.robData.bits.data := entries(io.readRobIdx.bits).bits.data
   }.otherwise {
     io.robData.valid := false.B
     io.robData.bits := DontCare
@@ -132,5 +131,10 @@ class ROB()(implicit val params: Parameters) extends Module {
   }.otherwise {
     io.retireInst.valid := false.B
     io.retireInst.bits := DontCare
+  }
+
+  when(io.flush.valid) {
+    assert(entries(io.flush.bits).valid, "Flushing entry invalid")
+    entries(io.flush.bits).bits.flush := true.B
   }
 }

@@ -1,7 +1,7 @@
 package io.riscy.stages
 
 import chisel3.util.{Valid, isPow2, log2Ceil}
-import chisel3.{Bundle, DontCare, Input, Module, Output, PrintableHelper, RegInit, UInt, VecInit, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
+import chisel3.{Bool, Bundle, DontCare, Input, Module, Output, PrintableHelper, RegInit, UInt, VecInit, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.stages.signals.Parameters
 
 class Rename()(implicit val params: Parameters) extends Module {
@@ -11,13 +11,18 @@ class Rename()(implicit val params: Parameters) extends Module {
   require(isPow2(nPhyRegs))
 
   val io = IO(new Bundle {
+    val allocate = Input(Bool())
+    val allocatedIdx = Output(Valid(UInt(log2Ceil(nPhyRegs).W)))
+
     val rs1 = Input(UInt(log2Ceil(nArchRegs).W))
     val rs2 = Input(UInt(log2Ceil(nArchRegs).W))
-    val rd = Input(Valid(UInt(log2Ceil(nArchRegs).W)))
+    val rd = Input(Valid(new Bundle {
+      val arch = UInt(log2Ceil(nArchRegs).W)
+      val phy = UInt(log2Ceil(nPhyRegs).W)
+    }))
 
     val rs1PhyReg = Output(UInt(log2Ceil(nPhyRegs).W))
     val rs2PhyReg = Output(UInt(log2Ceil(nPhyRegs).W))
-    val rdPhyReg = Output(Valid(UInt(log2Ceil(nPhyRegs).W)))
 
     val commit = Input(Valid(new Bundle {
       val archReg = UInt(log2Ceil(nArchRegs).W)
@@ -73,23 +78,25 @@ class Rename()(implicit val params: Parameters) extends Module {
     retirementRat(io.commit.bits.archReg).bits := io.commit.bits.phyReg
   }
 
-  when(freeRegIdx < nPhyRegs.U && io.rd.valid) {
+  when(io.rd.valid) {
+    rat(io.rd.bits.arch) := io.rd.bits.phy
+  }
+
+  when(freeRegIdx < nPhyRegs.U && io.allocate) {
     val phyReg = freeRegs(actFreeRegIdx)
 
-    printf(cf"Allocating p$phyReg <- a${io.rd} @ $freeRegIdx\n")
+    printf(cf"Allocating p$phyReg <- $freeRegIdx\n")
 
-    io.rdPhyReg.valid := true.B
-    io.rdPhyReg.bits := phyReg
-
-    rat(io.rd.bits) := phyReg
+    io.allocatedIdx.valid := true.B
+    io.allocatedIdx.bits := phyReg
 
     freeRegIdx := freeRegIdx + 1.U
   }.otherwise {
-    printf(cf"Cannot allocate for ${io.rd}\n")
+    printf(cf"Cannot allocate, ${io.allocate}\n")
 
     assert(freeRegIdx === nPhyRegs.U, "freeRegIdx cannot be anything else")
 
-    io.rdPhyReg.valid := false.B
-    io.rdPhyReg.bits := DontCare
+    io.allocatedIdx.valid := false.B
+    io.allocatedIdx.bits := DontCare
   }
 }

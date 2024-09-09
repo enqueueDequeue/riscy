@@ -15,6 +15,8 @@ class Fetch()(implicit val params: Parameters) extends Module {
     val iReadValue = Flipped(Decoupled(UInt(instWidth.W)))
   })
 
+  // todo: enqueue irrespectively
+  //  and then check ready, if ready, then it's enqueued correctly
   when(io.iReadAddr.ready) {
     io.iReadAddr.enq(io.pc)
   }.otherwise {

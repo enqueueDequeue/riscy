@@ -1,7 +1,7 @@
 package io.riscy
 
 import chisel3.util.Decoupled
-import chisel3.{Bool, Bundle, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
+import chisel3.{Bool, Bundle, DontCare, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.InOrderPipelinedCPU.forward
 import io.riscy.stages.{Decode, Execute, Fetch, Memory, PhyRegs, WriteBack}
 import io.riscy.stages.signals.{DecodeSignals, ExecuteSignals, FetchSignals, MemorySignals, Parameters, RegReadSignals, Stage, WriteBackSignals}
@@ -126,11 +126,10 @@ class InOrderPipelinedCPU()(implicit val params: Parameters) extends Module {
 
     when(fetch.io.inst.valid) {
       fetchSignalsWire.instruction.valid := true.B
-      fetchSignalsWire.instruction.bits := fetch.io.inst.deq()
+      fetchSignalsWire.instruction.bits := fetch.io.inst.bits
     }.otherwise {
       fetchSignalsWire.instruction.valid := false.B
       fetchSignalsWire.instruction.bits := NOP.U
-      fetch.io.inst.nodeq()
     }
 
     when(!stall) {
@@ -162,6 +161,10 @@ class InOrderPipelinedCPU()(implicit val params: Parameters) extends Module {
   {
     val stallRs1 = Wire(Bool())
     val stallRs2 = Wire(Bool())
+
+    phyRegs.io.rd2 := 0.U
+    phyRegs.io.rd2En := false.B
+    phyRegs.io.rd2Value := DontCare
 
     phyRegs.io.rs1 := idRrSignals.stage.decode.rs1
     phyRegs.io.rs2 := idRrSignals.stage.decode.rs2

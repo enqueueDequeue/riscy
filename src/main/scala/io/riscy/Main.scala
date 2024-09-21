@@ -173,78 +173,117 @@ object Main {
       test(new Rename()) { dut =>
         println(s"Testing Rename")
 
-        dut.io.rs1.poke(0.U)
-        dut.io.rs2.poke(0.U)
-
-        // renaming arch register register
-        dut.io.rd.valid.poke(true.B)
-        dut.io.rd.bits.poke(1.U)
-        dut.io.rdPhyReg.valid.expect(true.B)
-        dut.io.rdPhyReg.bits.expect(0.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(0.U)
         dut.clock.step()
 
         dut.io.rd.valid.poke(true.B)
-        dut.io.rd.bits.poke(1.U)
-        dut.io.rdPhyReg.valid.expect(true.B)
-        dut.io.rdPhyReg.bits.expect(1.U)
-        dut.clock.step()
-
-        dut.io.rd.valid.poke(true.B)
-        dut.io.rd.bits.poke(3.U)
-        dut.io.rdPhyReg.valid.expect(true.B)
-        dut.io.rdPhyReg.bits.expect(2.U)
-        dut.clock.step()
-
-        dut.io.rd.valid.poke(true.B)
-        dut.io.rd.bits.poke(4.U)
-        dut.io.rdPhyReg.valid.expect(true.B)
-        dut.io.rdPhyReg.bits.expect(3.U)
-        dut.clock.step()
-
-        dut.io.rd.valid.poke(true.B)
-        dut.io.rd.bits.poke(5.U)
-        dut.io.rdPhyReg.valid.expect(false.B)
-        dut.clock.step()
-
-        dut.io.rd.valid.poke(true.B)
-        dut.io.rd.bits.poke(6.U)
-        dut.io.rdPhyReg.valid.expect(false.B)
-        dut.clock.step()
-
-        // commit the physical register
-        // this will write to RRat
-        dut.io.commit.valid.poke(true.B)
-        dut.io.commit.bits.archReg.poke(1.U)
-        dut.io.commit.bits.phyReg.poke(0.U)
-        dut.io.rd.valid.poke(true.B)
-        dut.io.rd.bits.poke(6.U)
-        dut.io.rdPhyReg.valid.expect(false.B)
-        dut.clock.step()
-
-        // commit again
-        // this will free the previous value from RRat
-        dut.io.commit.valid.poke(true.B)
-        dut.io.commit.bits.archReg.poke(1.U)
-        dut.io.commit.bits.phyReg.poke(1.U)
-        dut.io.rd.valid.poke(true.B)
-        dut.io.rd.bits.poke(7.U)
-        dut.io.rdPhyReg.valid.expect(false.B)
-        dut.clock.step()
-
-        dut.io.commit.valid.poke(false.B)
-        dut.io.rd.valid.poke(true.B)
-        dut.io.rd.bits.poke(7.U)
-        dut.io.rdPhyReg.valid.expect(true.B)
-        dut.io.rdPhyReg.bits.expect(0.U)
+        dut.io.rd.bits.arch.poke(1.U)
+        dut.io.rd.bits.phy.poke(0.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(1.U)
         dut.clock.step()
 
         dut.io.rs1.poke(1.U)
-        dut.io.rs2.poke(3.U)
+        dut.io.rs1PhyReg.expect(0.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.arch.poke(1.U)
+        dut.io.rd.bits.phy.poke(1.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(2.U)
+        dut.clock.step()
+
+        dut.io.rs1.poke(1.U)
         dut.io.rs1PhyReg.expect(1.U)
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.arch.poke(2.U)
+        dut.io.rd.bits.phy.poke(2.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(3.U)
+        dut.clock.step()
+
+        dut.io.rs1.poke(1.U)
+        dut.io.rs1PhyReg.expect(1.U)
+        dut.io.rs2.poke(2.U)
         dut.io.rs2PhyReg.expect(2.U)
         dut.io.rd.valid.poke(true.B)
-        dut.io.rd.bits.poke(8.U)
-        dut.io.rdPhyReg.valid.expect(false.B)
+        dut.io.rd.bits.arch.poke(3.U)
+        dut.io.rd.bits.phy.poke(3.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(false.B)
+        dut.clock.step()
+
+        dut.io.rs1.poke(3.U)
+        dut.io.rs1PhyReg.expect(3.U)
+        dut.io.rs2.poke(2.U)
+        dut.io.rs2PhyReg.expect(2.U)
+        dut.io.rd.valid.poke(false.B)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(false.B)
+        dut.clock.step()
+
+        // retire the physical register
+        dut.io.retire.valid.poke(true.B)
+        dut.io.retire.bits.arch.poke(1.U)
+        dut.io.retire.bits.phy.poke(0.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(false.B)
+        dut.clock.step()
+
+        // retire again
+        // this will free the previous value from RRat
+        dut.io.retire.valid.poke(true.B)
+        dut.io.retire.bits.arch.poke(1.U)
+        dut.io.retire.bits.phy.poke(1.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(false.B)
+        dut.clock.step()
+
+        dut.io.retire.valid.poke(true.B)
+        dut.io.retire.bits.arch.poke(2.U)
+        dut.io.retire.bits.phy.poke(2.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(0.U)
+        dut.clock.step()
+
+        dut.io.rd.valid.poke(true.B)
+        dut.io.rd.bits.arch.poke(1.U)
+        dut.io.rd.bits.phy.poke(0.U)
+        dut.io.retire.valid.poke(true.B)
+        dut.io.retire.bits.arch.poke(3.U)
+        dut.io.retire.bits.phy.poke(3.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(false.B)
+        dut.clock.step()
+
+        dut.io.rs1.poke(3.U)
+        dut.io.rs1PhyReg.expect(3.U)
+        dut.io.rs2.poke(1.U)
+        dut.io.rs2PhyReg.expect(0.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(false.B)
+        dut.clock.step()
+
+        dut.io.flush.poke(true.B)
+        dut.io.allocate.poke(false.B)
+        dut.clock.step()
+
+        dut.io.flush.poke(false.B)
+        dut.io.rs1.poke(1.U)
+        dut.io.rs1PhyReg.expect(1.U)
+        dut.io.rs1.poke(2.U)
+        dut.io.rs1PhyReg.expect(2.U)
+        dut.io.rs1.poke(3.U)
+        dut.io.rs1PhyReg.expect(3.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(0.U)
+        dut.clock.step()
 
         println(s"Renaming test completed")
       }
@@ -1037,34 +1076,38 @@ object Main {
       implicit val params = getParams(nROBEntries = 4)
 
       test(new ROB()) { dut =>
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(0.U)
+
         // inst 1
         dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x01.U)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x01.U)
         dut.io.robIdx.valid.expect(true.B)
         dut.io.robIdx.bits.expect(0.U)
         dut.clock.step()
 
         // inst 2
         dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x02.U)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x02.U)
         dut.io.robIdx.valid.expect(true.B)
         dut.io.robIdx.bits.expect(1.U)
         dut.clock.step()
 
         // inst 3
         dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x03.U)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x03.U)
         dut.io.robIdx.valid.expect(true.B)
         dut.io.robIdx.bits.expect(2.U)
         dut.clock.step()
 
         // inst 4 - won't fit in, addressing limitations
         dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x04.U)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x04.U)
         dut.io.robIdx.valid.expect(false.B)
         dut.clock.step()
 
@@ -1076,8 +1119,8 @@ object Main {
 
         // expect inst 1 to retire
         dut.io.retireInst.valid.expect(true.B)
-        dut.io.retireInst.bits.fetchSignals.instruction.valid.expect(true.B)
-        dut.io.retireInst.bits.fetchSignals.instruction.bits.expect(0x01.U)
+        dut.io.retireInst.bits.signals.fetchSignals.instruction.valid.expect(true.B)
+        dut.io.retireInst.bits.signals.fetchSignals.instruction.bits.expect(0x01.U)
         // commit inst 3
         dut.io.commitRobIdx.valid.poke(true.B)
         dut.io.commitRobIdx.bits.poke(2.U)
@@ -1088,8 +1131,8 @@ object Main {
         // as inst 1 is retired now
         // inst 5
         dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x05.U)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x05.U)
         dut.io.robIdx.valid.expect(true.B)
         dut.io.robIdx.bits.expect(3.U)
         // ----------------------------------------
@@ -1116,27 +1159,26 @@ object Main {
         dut.io.commitRobIdx.valid.poke(false.B)
         // ----------------------------------------
         dut.io.retireInst.valid.expect(true.B)
-        dut.io.retireInst.bits.fetchSignals.instruction.valid.expect(true.B)
-        dut.io.retireInst.bits.fetchSignals.instruction.bits.expect(0x02.U)
+        dut.io.retireInst.bits.signals.fetchSignals.instruction.valid.expect(true.B)
+        dut.io.retireInst.bits.signals.fetchSignals.instruction.bits.expect(0x02.U)
         dut.clock.step()
 
         // inst 6
         dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.valid.poke(true.B)
-        dut.io.instSignals.bits.fetchSignals.instruction.bits.poke(0x06.U)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x06.U)
         dut.io.robIdx.valid.expect(true.B)
         dut.io.robIdx.bits.expect(0.U)
         // ----------------------------------------
         dut.io.retireInst.valid.expect(true.B)
-        dut.io.retireInst.bits.fetchSignals.instruction.valid.expect(true.B)
-        dut.io.retireInst.bits.fetchSignals.instruction.bits.expect(0x03.U)
+        dut.io.retireInst.bits.signals.fetchSignals.instruction.valid.expect(true.B)
+        dut.io.retireInst.bits.signals.fetchSignals.instruction.bits.expect(0x03.U)
         dut.clock.step()
 
         dut.io.instSignals.valid.poke(false.B)
         dut.clock.step()
       }
     }
-    */
 
     {
       // address & data width
@@ -1262,6 +1304,71 @@ object Main {
       }
 
       // todo: add more test cases maybe?
+    }
+    */
+
+    {
+      implicit val params = getParams()
+
+      test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
+        val instructions = Seq(
+          0x00800293L, // ADDI x5, x0, 8
+          0x00a28313L, // ADDI x6, x5, 10
+          0x006303b3L, // ADD x7, x6, x6
+          0x0073a023L, // SW x7, 0(x7)
+        )
+
+        dut.io.iReadAddr.valid.expect(true.B)
+        dut.io.iReadAddr.bits.expect(0.U)
+        dut.io.iReadAddr.ready.poke(true.B)
+
+        dut.io.iReadValue.valid.poke(true.B)
+        dut.io.iReadValue.bits.poke(instructions(0).asUInt)
+        dut.io.iReadValue.ready.expect(true.B)
+
+        dut.clock.step()
+
+        dut.io.iReadAddr.valid.expect(true.B)
+        dut.io.iReadAddr.bits.expect(4.U)
+
+        dut.io.iReadValue.valid.poke(true.B)
+        dut.io.iReadValue.bits.poke(instructions(1).asUInt)
+        dut.io.iReadValue.ready.expect(true.B)
+        dut.clock.step()
+
+        dut.io.iReadAddr.valid.expect(true.B)
+        dut.io.iReadAddr.bits.expect(8.U)
+
+        dut.io.iReadValue.valid.poke(true.B)
+        dut.io.iReadValue.bits.poke(instructions(2).asUInt)
+        dut.io.iReadValue.ready.expect(true.B)
+        dut.clock.step()
+
+        dut.io.iReadAddr.valid.expect(true.B)
+        dut.io.iReadAddr.bits.expect(12.U)
+
+        dut.io.iReadValue.valid.poke(true.B)
+        dut.io.iReadValue.bits.poke(instructions(3).asUInt)
+        dut.io.iReadValue.ready.expect(true.B)
+        dut.clock.step()
+
+        dut.io.iReadAddr.valid.expect(true.B)
+        dut.io.iReadAddr.bits.expect(16.U)
+
+        dut.io.iReadValue.valid.poke(false.B)
+        dut.io.iReadValue.bits.poke(0.U)
+
+        while(true) {
+          println("waiting...")
+
+          if (dut.io.dMem.valid.peek().litToBoolean) {
+            println(s"got a memory request @ ${dut.io.dMem.bits.addr.peek().litValue}")
+            return
+          }
+
+          dut.clock.step()
+        }
+      }
     }
 
     println("Compiling")

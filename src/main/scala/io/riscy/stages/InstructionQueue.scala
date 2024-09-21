@@ -108,26 +108,30 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
   val nextOccupancies = Wire(UInt(nEntries.W))
 
   when(readyInstIdx.valid) {
-    printf(cf"Freeing idx: ${readyInstIdx.bits}\n")
+    printf(cf"IQ: Freeing idx: ${readyInstIdx.bits}\n")
     nextAllocationsIntermediate := allocations & (~(1.U << readyInstIdx.bits)).asUInt
+    nextOccupanciesIntermediate := occupancies & (~(1.U << readyInstIdx.bits)).asUInt
   }.otherwise {
     nextAllocationsIntermediate := allocations
+    nextOccupanciesIntermediate := occupancies
   }
 
   when(io.allocate && freeStationIdx.valid) {
     val stationIdx = freeStationIdx.bits
 
-    printf(cf"allocating ${io.instSignals} @ idx: $stationIdx\n")
+    printf(cf"IQ: allocating idx: $stationIdx\n")
 
     io.allocatedIdx.valid := true.B
     io.allocatedIdx.bits := stationIdx
 
-    nextOccupanciesIntermediate := occupancies & (~(1.U << stationIdx)).asUInt
+    nextAllocations := nextAllocationsIntermediate | (1.U << stationIdx).asUInt
   }.otherwise {
+    printf(cf"IQ: not allocating\n")
+
     io.allocatedIdx.valid := false.B
     io.allocatedIdx.bits := DontCare
 
-    nextOccupanciesIntermediate := occupancies
+    nextAllocations := nextAllocationsIntermediate
   }
 
   when(io.instSignals.valid) {
@@ -152,11 +156,9 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
     }
 
     nextMapMask := rs1Mask | rs2Mask
-    nextAllocations := nextAllocationsIntermediate | (1.U << stationIdx).asUInt
     nextOccupancies := nextOccupanciesIntermediate | (1.U << stationIdx).asUInt
   }.otherwise {
     nextMapMask := 0.U
-    nextAllocations := nextAllocationsIntermediate
     nextOccupancies := nextOccupanciesIntermediate
   }
 
@@ -174,10 +176,9 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
     allocations := 0.U
   }
 
-  printf(cf"allocations: |$allocations%b|\n")
-  printf(cf"readyInsts: $readyInsts\n")
-  printf(cf"readyInstIdx: $readyInstIdx\n")
-  printf(cf"\n")
+  printf(cf"IQ: allocations: |$allocations%b|\n")
+  printf(cf"IQ: readyInsts: $readyInsts\n")
+  printf(cf"IQ: readyInstIdx: $readyInstIdx\n")
 
   io.readyInstSignals.valid := readyInstIdx.valid
   io.readyInstSignals.bits := Mux(readyInstIdx.valid, stations(readyInstIdx.bits), DontCare)

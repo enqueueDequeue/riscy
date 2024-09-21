@@ -1,7 +1,7 @@
 package io.riscy
 
 import chisel3.util.{Decoupled, Valid, log2Ceil}
-import chisel3.{Bool, Bundle, DontCare, Flipped, Module, Mux, RegInit, UInt, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, when}
+import chisel3.{Bool, Bundle, DontCare, Flipped, Module, Mux, PrintableHelper, RegInit, UInt, Vec, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.OutOfOrderCPU.isValid
 import io.riscy.stages.signals.Utils.{NOP, PC_INIT, initFetchSignals, initStage, initValid}
 import io.riscy.stages.signals.{AllocSignals, DecodeSignals, FetchSignals, Parameters, ROBSignals, RegReadSignals, RenameSignals, Stage}
@@ -10,6 +10,7 @@ import io.riscy.stages.{Decode, Execute, ExecuteOp, Fetch, InstructionQueue, Loa
 class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   val addrWidth = params.addrWidth
   val nROBEntries = params.nROBEntries
+  val nPhyRegs = params.nPhyRegs
 
   val pc = RegInit(0.U(addrWidth.W))
 
@@ -39,11 +40,10 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
 
   // signals from fetch to decode
   val ifIdSignals = RegInit({
-    val initSignals = Wire(Stage(new Bundle {
+    val initSignals = Wire(Valid(Stage(new Bundle {
       val fetch = FetchSignals()
-    }))
+    })))
     initStage(initSignals)
-    initFetchSignals(initSignals.stage.fetch)
     initSignals
   })
 
@@ -89,16 +89,14 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
     initSignals
   })
 
-  // signals from Execute & Memory to Commit
-  val emCommitSignals = RegInit({
-    val initSignals = Wire(Valid(Stage(new Bundle {
-      val pc = UInt(addrWidth.W)
-      val nextPc = UInt(addrWidth.W)
-      val zero = Bool()
-    })))
-    initStage(initSignals)
-    initSignals
-  })
+  val wakeupRegs = RegInit(0.U(nPhyRegs.W))
+  val wakeupRegsW = Wire(Vec(nPhyRegs, Bool()))
+
+  wakeupRegsW := wakeupRegs.asBools
+
+  val flush = Wire(Bool())
+  val fStall = Wire(Bool())
+  val dStall = Wire(Bool())
 
   // Fetch
   val fetch = Module(new Fetch())
@@ -111,66 +109,97 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
 
   // fetch output
   when(fetch.io.inst.valid) {
-    ifIdSignals.pc := pc
-    ifIdSignals.stage.fetch.instruction.valid := true.B
-    ifIdSignals.stage.fetch.instruction.bits := fetch.io.inst.deq()
+    ifIdSignals.valid := true.B
+    ifIdSignals.bits.pc := pc
+    ifIdSignals.bits.stage.fetch.instruction.valid := true.B
+    ifIdSignals.bits.stage.fetch.instruction.bits := fetch.io.inst.bits
+
+    fStall := false.B
   }.otherwise {
-    ifIdSignals.pc := PC_INIT.U
-    ifIdSignals.stage.fetch.instruction.valid := false.B
-    ifIdSignals.stage.fetch.instruction.bits := DontCare
-    fetch.io.inst.nodeq()
+    ifIdSignals.valid := false.B
+    ifIdSignals.bits := DontCare
+
+    fStall := true.B
+  }
+
+  when(flush) {
+    fStall := false.B
+    ifIdSignals.valid := false.B
   }
 
   // Decode
-  val stall = Wire(Bool())
-
   val decode = Module(new Decode())
   val rename = Module(new Rename())
   val rob = Module(new ROB())
   val iq = Module(new InstructionQueue())
   val memory = Module(new MemoryO3())
 
-  val shouldAct = ifIdSignals.stage.fetch.instruction.valid
+  // NOTE: In case the decode stage requested for a stall in the
+  // previous cycle, the ifIdSignals will remain same in this cycle
+  // So, decode should result in the same result.
 
-  when(shouldAct) {
-    decode.io.inst := ifIdSignals.stage.fetch.instruction.bits
+  val dstReg = RegInit({
+    val initSignals = Wire(Valid(UInt(log2Ceil(params.nPhyRegs).W)))
+
+    initSignals.valid := false.B
+    initSignals.bits := DontCare
+
+    initSignals
+  })
+  val robIdx = RegInit({
+    val initSignals = Wire(Valid(UInt(log2Ceil(nROBEntries).W)))
+
+    initSignals.valid := false.B
+    initSignals.bits := DontCare
+
+    initSignals
+  })
+  val iqIdx = RegInit({
+    val initSignals = Wire(Valid(UInt(log2Ceil(params.nIQEntries).W)))
+
+    initSignals.valid := false.B
+    initSignals.bits := DontCare
+
+    initSignals
+  })
+  val memIdx = RegInit({
+    val initSignals = Wire(Valid(new LoadStoreIndex()))
+
+    initSignals.valid := false.B
+    initSignals.bits := DontCare
+
+    initSignals
+  })
+
+  when(flush) {
+    dstReg.valid := false.B
+    robIdx.valid := false.B
+    iqIdx.valid := false.B
+    memIdx.valid := false.B
+  }
+
+  when(flush || !ifIdSignals.valid || !ifIdSignals.bits.stage.fetch.instruction.valid) {
+    rename.io.allocate := false.B
+    rob.io.allocate := false.B
+    iq.io.allocate := false.B
+    memory.io.allocate.valid := false.B
+    memory.io.allocate.bits := DontCare
+
+    decode.io.inst := NOP.U
+
+    idRenameSignals.valid := false.B
+    idRenameSignals.bits.pc := DontCare
+    idRenameSignals.bits.stage.fetch := ifIdSignals.bits.stage.fetch
+    idRenameSignals.bits.stage.decode := decode.io.signals
+    idRenameSignals.bits.stage.alloc := DontCare
+
+    dStall := false.B
+  }.otherwise {
+    decode.io.inst := ifIdSignals.bits.stage.fetch.instruction.bits
 
     val decodeSignalsOut = decode.io.signals
 
     assert(!isValid(decodeSignalsOut.memRead) || !isValid(decodeSignalsOut.memWrite))
-
-    val dstReg = RegInit({
-      val initSignals = Wire(Valid(UInt(log2Ceil(params.nPhyRegs).W)))
-
-      initSignals.valid := false.B
-      initSignals.bits := DontCare
-
-      initSignals
-    })
-    val robIdx = RegInit({
-      val initSignals = Wire(Valid(UInt(log2Ceil(nROBEntries).W)))
-
-      initSignals.valid := false.B
-      initSignals.bits := DontCare
-
-      initSignals
-    })
-    val iqIdx = RegInit({
-      val initSignals = Wire(Valid(UInt(log2Ceil(params.nIQEntries).W)))
-
-      initSignals.valid := false.B
-      initSignals.bits := DontCare
-
-      initSignals
-    })
-    val memIdx = RegInit({
-      val initSignals = Wire(Valid(new LoadStoreIndex()))
-
-      initSignals.valid := false.B
-      initSignals.bits := DontCare
-
-      initSignals
-    })
 
     // Allocations
     val dstRegW = Wire(Valid(UInt(log2Ceil(params.nPhyRegs).W)))
@@ -183,31 +212,50 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
     when(regShouldAllocate && !dstReg.valid) {
       rename.io.allocate := true.B
       dstRegW := rename.io.allocatedIdx
+    }.otherwise {
+      rename.io.allocate := false.B
+      dstRegW := dstReg
     }
 
     when(!robIdx.valid) {
       rob.io.allocate := true.B
       robIdxW := rob.io.allocatedIdx
+    }.otherwise {
+      rob.io.allocate := false.B
+      robIdxW := robIdx
     }
 
     when(!iqIdx.valid) {
       iq.io.allocate := true.B
       iqIdxW := iq.io.allocatedIdx
+    }.otherwise {
+      iq.io.allocate := false.B
+      iqIdxW := iqIdx
     }
 
     val memShouldAllocate = isValid(decodeSignalsOut.memRead) || isValid(decodeSignalsOut.memWrite)
 
-    when(memShouldAllocate && memIdx.valid) {
+    when(memShouldAllocate && !memIdx.valid) {
       memory.io.allocate.valid := memShouldAllocate
       memory.io.allocate.bits := Mux(isValid(decodeSignalsOut.memRead), MemRWDirection.read, MemRWDirection.write)
 
       memIdxW := memory.io.allocatedIdx
+    }.otherwise {
+      memory.io.allocate.valid := false.B
+      memory.io.allocate.bits := DontCare
+
+      memIdxW := memIdx
     }
 
-    val regAllocSuccess = regShouldAllocate && dstRegW.valid
+    val regAllocSuccess = (regShouldAllocate && dstRegW.valid) || (!regShouldAllocate)
     val robAllocSuccess = robIdxW.valid
     val iqAllocSuccess = iqIdxW.valid
-    val memAllocSuccess = memShouldAllocate && memIdxW.valid
+    val memAllocSuccess = (memShouldAllocate && memIdxW.valid) || (!memShouldAllocate)
+
+    printf(cf"O3: regShouldAllocate:  $regShouldAllocate  ~ $dstRegW\n")
+    printf(cf"O3: robAllocSuccess:    $robAllocSuccess    ~ $robIdxW\n")
+    printf(cf"O3: iqAllocSuccess:     $iqAllocSuccess     ~ $iqIdxW\n")
+    printf(cf"O3: memShouldAllocate:  $memShouldAllocate  ~ $memIdxW\n")
 
     when(regAllocSuccess && robAllocSuccess && iqAllocSuccess && memAllocSuccess) {
       // proceed
@@ -215,8 +263,8 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
       assert(iqIdxW.valid)
 
       idRenameSignals.valid := true.B
-      idRenameSignals.bits.pc := ifIdSignals.pc
-      idRenameSignals.bits.stage.fetch := ifIdSignals.stage.fetch
+      idRenameSignals.bits.pc := ifIdSignals.bits.pc
+      idRenameSignals.bits.stage.fetch := ifIdSignals.bits.stage.fetch
       idRenameSignals.bits.stage.decode := decodeSignalsOut
       idRenameSignals.bits.stage.alloc.dstReg := dstRegW
       idRenameSignals.bits.stage.alloc.robIdx := robIdxW.bits
@@ -224,10 +272,11 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
       idRenameSignals.bits.stage.alloc.memIdx := memIdxW
 
       dstReg.valid := false.B
-      robIdxW.valid := false.B
+      robIdx.valid := false.B
       iqIdx.valid := false.B
       memIdx.valid := false.B
-      stall := false.B
+
+      dStall := false.B
     }.otherwise {
       // stall
       idRenameSignals.valid := false.B
@@ -237,18 +286,8 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
       robIdx := robIdxW
       iqIdx := iqIdxW
       memIdx := memIdxW
-      stall := true.B
+      dStall := true.B
     }
-  }.otherwise {
-    decode.io.inst := NOP.U
-
-    idRenameSignals.valid := false.B
-    idRenameSignals.bits.pc := DontCare
-    idRenameSignals.bits.stage.fetch := ifIdSignals.stage.fetch
-    idRenameSignals.bits.stage.decode := decode.io.signals
-    idRenameSignals.bits.stage.alloc := DontCare
-
-    stall := true.B
   }
 
   // Rename
@@ -257,7 +296,11 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   rename.io.rs2 := idRenameSignals.bits.stage.decode.rs2
   rename.io.rd.valid := idRenameSignals.valid && idRenameSignals.bits.stage.alloc.dstReg.valid && idRenameSignals.bits.stage.decode.regWrite
   rename.io.rd.bits.arch := idRenameSignals.bits.stage.decode.rd
-  rename.io.rd.bits.phy := idRenameSignals.bits.stage.alloc.dstReg
+  rename.io.rd.bits.phy := idRenameSignals.bits.stage.alloc.dstReg.bits
+
+  when(rename.io.deallocationIdx.valid) {
+    wakeupRegsW(rename.io.deallocationIdx.bits) := false.B
+  }
 
   // rename output
   renameRobIqSignals.valid := idRenameSignals.valid
@@ -268,6 +311,10 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   renameRobIqSignals.bits.stage.rename.rs1PhyReg := rename.io.rs1PhyReg
   renameRobIqSignals.bits.stage.rename.rs2PhyReg := rename.io.rs2PhyReg
   renameRobIqSignals.bits.stage.rename.rdPhyReg := idRenameSignals.bits.stage.alloc.dstReg
+
+  when(flush) {
+    renameRobIqSignals.valid := false.B
+  }
 
   // Running ROB and IQ stages in parallel
 
@@ -291,16 +338,26 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   iq.io.instSignals.bits.rs1PhyReg.bits := renameRobIqSignals.bits.stage.rename.rs1PhyReg
   iq.io.instSignals.bits.rs2PhyReg.bits := renameRobIqSignals.bits.stage.rename.rs2PhyReg
 
-  // todo: assign the wakeup regs
+  iq.io.wakeUpRegs := wakeupRegsW.asUInt
 
   iqRRSignals.valid := iq.io.readyInstSignals.valid
   iqRRSignals.bits.robIdx := iq.io.readyInstSignals.bits
+
+  when(flush) {
+    iqRRSignals.valid := false.B
+  }
 
   // Reg Read
   val registers = Module(new PhyRegs())
 
   rob.io.readRobIdx.valid := iqRRSignals.valid
   rob.io.readRobIdx.bits := iqRRSignals.bits.robIdx
+
+  when(rob.io.robData.valid) {
+    printf(cf"O3: work began on: ${rob.io.robData}\n")
+  }.otherwise {
+    printf(cf"O3: pipeline stalled\n")
+  }
 
   assert(rob.io.robData.valid === iqRRSignals.valid)
 
@@ -309,14 +366,23 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
 
   rrExMemSignals.valid := iqRRSignals.valid
   rrExMemSignals.bits.pc := rob.io.robData.bits.pc
-  rrExMemSignals.bits.stage.rob := rob.io.robData.bits
-  rrExMemSignals.bits.stage.regRead.rs1Value := registers.io.rs1Value
-  rrExMemSignals.bits.stage.regRead.rs2Value := registers.io.rs2Value
+  rrExMemSignals.bits.stage.rob := rob.io.robData.bits.data
+  rrExMemSignals.bits.stage.regRead.rs1Value := Mux(rob.io.robData.bits.data.decodeSignals.rs1 === 0.U, 0.U, registers.io.rs1Value)
+  rrExMemSignals.bits.stage.regRead.rs2Value := Mux(rob.io.robData.bits.data.decodeSignals.rs2 === 0.U, 0.U, registers.io.rs2Value)
+
+  when(flush) {
+    rrExMemSignals.valid := false.B
+  }
 
   // Running Execute and Memory stages in parallel
 
   // Execute
   val execute = Module(new Execute())
+
+  val exFlushIdx = Wire(Valid(new Bundle {
+    val nextPc = UInt(addrWidth.W)
+    val robIdx = UInt(log2Ceil(nROBEntries).W)
+  }))
 
   when(rrExMemSignals.valid) {
     val rs1ValueIntermediate = Mux(rrExMemSignals.bits.stage.rob.decodeSignals.rs1 === 0.U, 0.U, rrExMemSignals.bits.stage.regRead.rs1Value)
@@ -338,52 +404,98 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
     // In case of JAL,    result = pc + 4, pc = pc + imm
     // In case of branch  result = <res>,  pc = if (zero) pc + imm else pc + 4
 
-    // todo: nextPc need not be calculated as such
-    //  The only calculation that needs to be done is:
-    //  If the branch is predicted taken or not and if the result is taken or not
+    rob.io.predictionRobIdx.valid := true.B
+    rob.io.predictionRobIdx.bits := rrExMemSignals.bits.stage.rob.allocSignals.robIdx
 
-    val nextPc = Mux(rrExMemSignals.bits.stage.rob.decodeSignals.jump, execute.io.result, pcImm)
-    val result = Mux(rrExMemSignals.bits.stage.rob.decodeSignals.jump, pc4, execute.io.result)
+    val predictedNextPcValid = rob.io.prediction.valid
+    val predictedNextPc = rob.io.prediction.bits.pc
+    val nextRobIdx = rob.io.prediction.bits.robIdx
 
-    when(rrExMemSignals.bits.stage.rob.decodeSignals.branch && execute.io.zero) {
+    when(rrExMemSignals.bits.stage.rob.decodeSignals.branch) {
+      val actualNextPc = Mux(execute.io.zero, pcImm, pc4)
 
+      exFlushIdx.valid := (predictedNextPcValid && predictedNextPc =/= actualNextPc) || (!predictedNextPcValid)
+      exFlushIdx.bits.nextPc := actualNextPc
+      exFlushIdx.bits.robIdx := nextRobIdx
     }.elsewhen(rrExMemSignals.bits.stage.rob.decodeSignals.jump) {
+      val actualNextPc = execute.io.result
 
+      exFlushIdx.valid := (predictedNextPcValid && predictedNextPc =/= actualNextPc) || (!predictedNextPcValid)
+      exFlushIdx.bits.nextPc := actualNextPc
+      exFlushIdx.bits.robIdx := nextRobIdx
+    }.otherwise {
+      exFlushIdx.valid := false.B
+      exFlushIdx.bits := DontCare
     }
 
-    registers.io.rdEn := rrExMemSignals.bits.stage.rob.allocSignals.dstReg.valid
-    registers.io.rd := rrExMemSignals.bits.stage.rob.allocSignals.dstReg.bits
-    registers.io.rdValue := execute.io.result // todo: pass the right value here
+    // NOTE: Jump is the only special instruction which
+    //       performs two operations: store pc+4 to the dst register
+    //       and update the PC (in this case mark the flush if mis-predicted)
+
+    // actual result of the execute stage
+    val result = Mux(rrExMemSignals.bits.stage.rob.decodeSignals.jump, pc4, execute.io.result)
+
+    // if there's not need to write to the register, we wouldn't have allocated in
+    // the first place. So, rdEn = dstReg.valid
+    when(rrExMemSignals.bits.stage.rob.allocSignals.dstReg.valid && !rrExMemSignals.bits.stage.rob.decodeSignals.memToReg) {
+      val dstReg = rrExMemSignals.bits.stage.rob.allocSignals.dstReg.bits
+
+      wakeupRegsW(dstReg) := true.B
+
+      registers.io.rdEn := true.B
+      registers.io.rd := dstReg
+      registers.io.rdValue := result
+    }.otherwise {
+      registers.io.rdEn := false.B
+      registers.io.rd := DontCare
+      registers.io.rdValue := DontCare
+    }
+
+    rob.io.commitRobIdx0.valid := true.B
+    rob.io.commitRobIdx0.bits := rrExMemSignals.bits.stage.rob.robIdx
   }.otherwise {
     execute.io.a := 0.U
     execute.io.b := 0.U
     execute.io.branchInvert := false.B
     execute.io.word := false.B
     execute.io.op := ExecuteOp.NOP
+
+    exFlushIdx.valid := false.B
+    exFlushIdx.bits := DontCare
+
+    registers.io.rdEn := false.B
+    registers.io.rd := DontCare
+    registers.io.rdValue := DontCare
+
+    rob.io.predictionRobIdx.valid := false.B
+    rob.io.predictionRobIdx.bits := DontCare
+
+    rob.io.commitRobIdx0.valid := false.B
+    rob.io.commitRobIdx0.bits := DontCare
   }
 
   // Memory
   memory.io.dMem <> io.dMem
   memory.io.dMemAck <> io.dMemAck
 
-  // todo: maybe break up the memory stage to
-  //  address generation and actual memory?
   val address = rrExMemSignals.bits.stage.regRead.rs1Value + rrExMemSignals.bits.stage.rob.decodeSignals.immediate
 
-  memory.io.readData.valid := isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memRead)
+  memory.io.readData.valid := rrExMemSignals.valid && isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memRead)
   memory.io.readData.bits.address := address
   memory.io.readData.bits.size := rrExMemSignals.bits.stage.rob.decodeSignals.memRead
   memory.io.readData.bits.robIdx := rrExMemSignals.bits.stage.rob.allocSignals.robIdx
   memory.io.readData.bits.dstReg := rrExMemSignals.bits.stage.rob.allocSignals.dstReg
   memory.io.readData.bits.ldIdx := rrExMemSignals.bits.stage.rob.allocSignals.memIdx.bits.asLoadIndex()
 
-  memory.io.writeData.valid := isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memWrite)
+  memory.io.writeData.valid := rrExMemSignals.valid && isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memWrite)
   memory.io.writeData.bits.address := address
   memory.io.writeData.bits.size := rrExMemSignals.bits.stage.rob.decodeSignals.memWrite
   memory.io.writeData.bits.data := rrExMemSignals.bits.stage.regRead.rs2Value
   memory.io.writeData.bits.stIdx := rrExMemSignals.bits.stage.rob.allocSignals.memIdx.bits.asStoreIndex()
 
   when(memory.io.readDataOut.valid && memory.io.readDataOut.bits.dstReg.valid) {
+    wakeupRegsW(memory.io.readDataOut.bits.dstReg.bits) := true.B
+
     registers.io.rd2En := true.B
     registers.io.rd2 := memory.io.readDataOut.bits.dstReg.bits
     registers.io.rd2Value := memory.io.readDataOut.bits.data
@@ -393,14 +505,95 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
     registers.io.rd2Value := DontCare
   }
 
-  // Commit
-  memory.io.commitIdx.valid := rob.io.retireInst.valid && rob.io.retireInst.bits.allocSignals.memIdx.valid
-  memory.io.commitIdx.bits := rob.io.retireInst.bits.allocSignals.memIdx.bits
+  rob.io.commitRobIdx1.valid := memory.io.readDataOut.valid
+  rob.io.commitRobIdx1.bits := memory.io.readDataOut.bits.robIdx
 
-  // todo: compare the flush indices of execute stage
-  //  and memory stage, flush the closest value to rob head
-  rob.io.flush := memory.io.flushIdx
+  // Commit
+  memory.io.commitIdx.valid := rob.io.retireInst.valid && !rob.io.retireInst.bits.flush && rob.io.retireInst.bits.signals.allocSignals.memIdx.valid
+  memory.io.commitIdx.bits := rob.io.retireInst.bits.signals.allocSignals.memIdx.bits
+
+  val memFlushIdx = memory.io.flushIdx
+
+  when(!exFlushIdx.valid && !memFlushIdx.valid) {
+    rob.io.flush.valid := false.B
+    rob.io.flush.bits := DontCare
+  }.elsewhen(exFlushIdx.valid && memFlushIdx.valid) {
+    val flushEx = dist(exFlushIdx.bits.robIdx) < dist(memFlushIdx.bits)
+
+    rob.io.flush.valid := true.B
+    rob.io.flush.bits.robIdx := Mux(flushEx, exFlushIdx.bits.robIdx, memFlushIdx.bits)
+    rob.io.flush.bits.updatePc.valid := flushEx
+    rob.io.flush.bits.updatePc.bits := exFlushIdx.bits.nextPc
+  }.elsewhen(exFlushIdx.valid) {
+    rob.io.flush.valid := true.B
+    rob.io.flush.bits.robIdx := exFlushIdx.bits.robIdx
+    rob.io.flush.bits.updatePc.valid := true.B
+    rob.io.flush.bits.updatePc.bits := exFlushIdx.bits.nextPc
+  }.elsewhen(memFlushIdx.valid) {
+    rob.io.flush.valid := true.B
+    rob.io.flush.bits.robIdx := memFlushIdx.bits
+    rob.io.flush.bits.updatePc.valid := false.B
+    rob.io.flush.bits.updatePc.bits := DontCare
+  }.otherwise {
+    assert(false.B, "Impossible state detected, dev error!")
+
+    rob.io.flush.valid := false.B
+    rob.io.flush.bits := DontCare
+  }
+
   // branch updates/flushing
+  when(rob.io.retireInst.valid) {
+    when(rob.io.retireInst.bits.flush) {
+
+      flush := true.B
+      iq.io.flush := true.B
+      memory.io.flush := true.B
+      rename.io.flush := true.B
+      rename.io.retire.valid := false.B
+      rename.io.retire.bits := DontCare
+    }.otherwise {
+      // just commit
+
+      flush := false.B
+      iq.io.flush := false.B
+      memory.io.flush := false.B
+      rename.io.flush := false.B
+      rename.io.retire.valid := rob.io.retireInst.bits.signals.allocSignals.dstReg.valid
+      rename.io.retire.bits.arch := rob.io.retireInst.bits.signals.decodeSignals.rd
+      rename.io.retire.bits.phy := rob.io.retireInst.bits.signals.allocSignals.dstReg.bits
+    }
+  }.otherwise {
+    flush := false.B
+
+    iq.io.flush := false.B
+    memory.io.flush := false.B
+    rename.io.flush := false.B
+    rename.io.retire.valid := false.B
+    rename.io.retire.bits := DontCare
+  }
+
+  printf(cf"O3: fStall: $fStall, dStall: $dStall, flush: $flush\n")
+
+  val stall = fStall || dStall
+
+  // no flush or stall, so go ahead with execution
+  when(!flush && !stall) {
+    pc := pc + 4.U
+  }
+
+  when(flush) {
+    assert(rename.io.allocatedRegs.valid, "Logic error in rename")
+
+    pc := rob.io.retireInst.bits.pc
+    wakeupRegsW := rename.io.allocatedRegs.bits.asBools
+  }
+
+  wakeupRegs := wakeupRegsW.asUInt
+
+  // lower value implies older instruction
+  def dist(robIdx: UInt): UInt = {
+    robIdx - rob.io.robHead
+  }
 }
 
 object OutOfOrderCPU {

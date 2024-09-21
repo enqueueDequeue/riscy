@@ -1,13 +1,13 @@
 package io.riscy.stages
 
 import chisel3.util.{Valid, isPow2, log2Ceil}
-import chisel3.{Bool, Bundle, DontCare, Input, Mem, Module, Output, PrintableHelper, RegInit, UInt, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
+import chisel3.{Bool, Bundle, DontCare, Input, Mem, Module, Output, PrintableHelper, RegInit, UInt, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.stages.signals.{Parameters, ROBSignals}
 
 class ROB()(implicit val params: Parameters) extends Module {
-  val instWidth = params.instWidth
   val nROBEntries = params.nROBEntries
   val nIQEntries = params.nIQEntries
+  val addrWidth = params.addrWidth
 
   require(isPow2(nROBEntries))
 
@@ -18,25 +18,44 @@ class ROB()(implicit val params: Parameters) extends Module {
 
     // instruction allocation
     val instSignals = Input(Valid(new Bundle {
-      val pc = UInt(instWidth.W)
+      val pc = UInt(addrWidth.W)
       val data = new ROBSignals()
     }))
 
     // instruction dispatch
     val readRobIdx = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
     val robData = Output(Valid(new Bundle {
-      val pc = UInt(instWidth.W)
+      val pc = UInt(addrWidth.W)
       val data = new ROBSignals()
     }))
 
     // flush
-    val flush = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
+    val flush = Input(Valid(new Bundle {
+      val updatePc = Valid(UInt(addrWidth.W))
+      val robIdx = UInt(log2Ceil(nROBEntries).W)
+    }))
 
     // instruction commit
-    val commitRobIdx = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
+    val commitRobIdx0 = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
+    val commitRobIdx1 = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
+
+    // branch prediction check
+    val predictionRobIdx = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
+
+    val prediction = Output(Valid(new Bundle {
+      val robIdx = UInt(log2Ceil(nROBEntries).W)
+      val pc = UInt(addrWidth.W)
+    }))
 
     // instruction retire
-    val retireInst = Output(Valid(new ROBSignals()))
+    val retireInst = Output(Valid(new Bundle {
+      val flush = Bool()
+      val pc = UInt(addrWidth.W)
+      val signals = new ROBSignals()
+    }))
+
+    // general
+    val robHead = Output(UInt(log2Ceil(nROBEntries).W))
   })
 
   // everything between robHead and robTail are
@@ -50,28 +69,28 @@ class ROB()(implicit val params: Parameters) extends Module {
   val entries = Mem(nROBEntries, Valid(new Bundle {
     val committed = Bool()
     val flush = Bool()
-    val pc = UInt(instWidth.W)
+    val pc = UInt(addrWidth.W)
     val data = new ROBSignals()
   }))
 
   val canAllocate = robHead =/= (robTail + 1.U)
 
   when(io.allocate && canAllocate) {
-    printf(cf"Allocating: head: $robHead, tail: $robTail\n")
+    printf(cf"ROB: Allocating: head: $robHead, tail: $robTail\n")
 
     io.allocatedIdx.valid := true.B
     io.allocatedIdx.bits := robTail
 
     robTail := robTail + 1.U
   }.otherwise {
-    printf(cf"Didn't allocate: head: $robHead, tail: $robTail, allocate: ${io.allocate}\n")
+    printf(cf"ROB: Didn't allocate: head: $robHead, tail: $robTail, allocate: ${io.allocate}\n")
 
     io.allocatedIdx.valid := false.B
     io.allocatedIdx.bits := DontCare
   }
 
   when(io.instSignals.valid) {
-    printf(cf"Storing instSignals: ${io.instSignals}\n")
+    printf(cf"ROB: Storing instSignals: ${io.instSignals}\n")
 
     val robIdx = io.instSignals.bits.data.robIdx
 
@@ -94,17 +113,28 @@ class ROB()(implicit val params: Parameters) extends Module {
     io.robData.bits := DontCare
   }
 
-  when(io.commitRobIdx.valid) {
-    assert(entries(io.commitRobIdx.bits).valid, "Invalid instruction being committed")
-    assert(!entries(io.commitRobIdx.bits).bits.committed, "Cannot commit already committed instruction")
+  when(io.commitRobIdx0.valid) {
+    printf(cf"ROB: committing ${io.commitRobIdx0} @ commitRobIdx0")
 
-    entries(io.commitRobIdx.bits).bits.committed := true.B
+    assert(entries(io.commitRobIdx0.bits).valid, "Invalid instruction being committed")
+    assert(!entries(io.commitRobIdx0.bits).bits.committed, "Cannot commit already committed instruction")
+
+    entries(io.commitRobIdx0.bits).bits.committed := true.B
 
     // NOTE: Head can be moved up by one position here itself
     // It would be advantageous too. A new instruction can be allocated
     // in the same cycle as this is being committed
     // Which is helpful in cases where the ROB is running full
     // Maybe this can be considered as an upgrade in the v2
+  }
+
+  when(io.commitRobIdx1.valid) {
+    printf(cf"ROB: committing ${io.commitRobIdx1} @ commitRobIdx1")
+
+    assert(entries(io.commitRobIdx1.bits).valid, "Invalid instruction being committed")
+    assert(!entries(io.commitRobIdx1.bits).bits.committed, "Cannot commit already committed instruction")
+
+    entries(io.commitRobIdx1.bits).bits.committed := true.B
   }
 
   // keep commiting the instructions in the case of O3
@@ -114,14 +144,9 @@ class ROB()(implicit val params: Parameters) extends Module {
     entries(robHead).valid := false.B
 
     io.retireInst.valid := true.B
-    io.retireInst.bits := entries(robHead).bits.data
-
-    // todo: completely figure how to flush
-    //  Need to copy the rrat to rat
-    //  need to update the IQ with the right values
-    //  (maybe mark all the entries as invalid?)
-    //  All the ldq and stq entries are invalid?
-    //  Update the target PC?
+    io.retireInst.bits.pc := entries(robHead).bits.pc
+    io.retireInst.bits.flush := entries(robHead).bits.flush
+    io.retireInst.bits.signals := entries(robHead).bits.data
 
     when(entries(robHead).bits.flush) {
       robTail := nextRobHead
@@ -134,7 +159,31 @@ class ROB()(implicit val params: Parameters) extends Module {
   }
 
   when(io.flush.valid) {
-    assert(entries(io.flush.bits).valid, "Flushing entry invalid")
-    entries(io.flush.bits).bits.flush := true.B
+    assert(entries(io.flush.bits.robIdx).valid, "Flushing entry invalid")
+
+    // NOTE: This operation will overwrite the program counter of the flushed instruction
+    //       to the update program counter. And, the processor when looks at the retired
+    //       instruction and find that it needs to be flushed, it will restart execution
+    //       from the program counter of that instruction which will be the updated PC
+    //       in this case.
+
+    entries(io.flush.bits.robIdx).bits.flush := true.B
+
+    when(io.flush.bits.updatePc.valid) {
+      entries(io.flush.bits.robIdx).bits.pc := io.flush.bits.updatePc.bits
+    }
   }
+
+  when(io.predictionRobIdx.valid) {
+    val nextRobIdx = io.predictionRobIdx.bits + 1.U
+
+    io.prediction.valid := entries(nextRobIdx).valid
+    io.prediction.bits.robIdx := nextRobIdx
+    io.prediction.bits.pc := entries(nextRobIdx).bits.pc
+  }.otherwise {
+    io.prediction.valid := false.B
+    io.prediction.bits := DontCare
+  }
+
+  io.robHead := robHead
 }

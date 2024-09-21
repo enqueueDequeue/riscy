@@ -1,7 +1,7 @@
 package io.riscy
 
 import chisel3.util.Decoupled
-import chisel3.{Bundle, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromIntToLiteral, fromIntToWidth, printf, when}
+import chisel3.{Bundle, DontCare, Flipped, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.stages.signals.Parameters
 import io.riscy.stages.signals.Utils.NOP
 import io.riscy.stages.{Decode, Execute, Fetch, Memory, PhyRegs, WriteBack}
@@ -66,6 +66,9 @@ class InOrderCPU()(implicit val params: Parameters) extends Module {
   phyRegs.io.rs2 := decode.io.signals.rs2
   phyRegs.io.rd := decode.io.signals.rd
   phyRegs.io.rdEn := decode.io.signals.regWrite
+  phyRegs.io.rd2 := 0.U
+  phyRegs.io.rd2En := false.B
+  phyRegs.io.rd2Value := DontCare
 
   val rs1Value = Mux(decode.io.signals.rs1 === 0.U, 0.U, phyRegs.io.rs1Value)
   val rs2Value = Mux(decode.io.signals.rs2 === 0.U, 0.U, phyRegs.io.rs2Value)
@@ -92,7 +95,7 @@ class InOrderCPU()(implicit val params: Parameters) extends Module {
 
   // control
   when(fetch.io.inst.valid) {
-    fetchedInst := fetch.io.inst.deq()
+    fetchedInst := fetch.io.inst.bits
 
     when(decode.io.signals.jump) {
       pc := execute.io.result
@@ -100,7 +103,6 @@ class InOrderCPU()(implicit val params: Parameters) extends Module {
       pc := Mux(execute.io.zero && decode.io.signals.branch, pc + decode.io.signals.immediate, nextPc)
     }
   }.otherwise {
-    fetch.io.inst.nodeq()
     fetchedInst := NOP.U
   }
 }

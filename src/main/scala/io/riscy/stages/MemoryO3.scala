@@ -1,7 +1,7 @@
 package io.riscy.stages
 
 import chisel3.util.{Cat, Decoupled, MuxLookup, PriorityMux, Reverse, Valid, isPow2, log2Ceil}
-import chisel3.{Bool, Bundle, DontCare, Flipped, Input, Module, Mux, Output, Reg, RegInit, UInt, Vec, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, when}
+import chisel3.{Bool, Bundle, DontCare, Flipped, Input, Module, Mux, Output, PrintableHelper, Reg, RegInit, UInt, Vec, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.stages.MemoryO3.{align, mask, readData, resize, writeData}
 import io.riscy.stages.signals.Parameters
 
@@ -85,9 +85,12 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     }))
 
     val readDataOut = Output(Valid(new Bundle {
+      val robIdx = UInt(log2Ceil(nROBEntries).W)
       val dstReg = Valid(UInt(log2Ceil(nPhyRegs).W))
       val data = UInt(dataWidth.W)
     }))
+
+    val flush = Input(Bool())
 
     // Memory interface
     val dMem = Decoupled(new Bundle {
@@ -111,7 +114,10 @@ class MemoryO3()(implicit params: Parameters) extends Module {
   })
 
   val requestInProgress = RegInit({
-    val initSignals = Wire(Valid(new LoadStoreIndex()))
+    val initSignals = Wire(Valid(new Bundle {
+      val ignore = Bool()
+      val idx = new LoadStoreIndex()
+    }))
 
     initSignals.valid := false.B
     initSignals.bits := DontCare
@@ -183,7 +189,22 @@ class MemoryO3()(implicit params: Parameters) extends Module {
   io.flushIdx.valid := false.B
   io.flushIdx.bits := DontCare
 
+  when(io.flush) {
+    loadQueueHead := 0.U
+    loadQueueTail := 0.U
+
+    storeQueueHead := 0.U
+    storeQueueTail := 0.U
+
+    requestInProgress.bits.ignore := true.B
+
+    readOutIdx.valid := false.B
+    readOutIdx.bits := DontCare
+  }
+
   when(io.allocate.valid) {
+    printf(cf"Memory: trying to allocate, allocate: ${io.allocate} ldCanAllocate: $ldCanAllocate, stCanAllocate: $stCanAllocate\n")
+
     when(io.allocate.bits === MemRWDirection.read) {
       io.allocatedIdx.valid := ldCanAllocate
       io.allocatedIdx.bits.rwDirection := MemRWDirection.read
@@ -330,8 +351,9 @@ class MemoryO3()(implicit params: Parameters) extends Module {
       storeQueue(stFireIdx.bits).fired := true.B
 
       requestInProgress.valid := true.B
-      requestInProgress.bits.rwDirection := MemRWDirection.write
-      requestInProgress.bits.idx := resize(stFireIdx.bits, LoadStoreIndex.width())
+      requestInProgress.bits.ignore := false.B
+      requestInProgress.bits.idx.rwDirection := MemRWDirection.write
+      requestInProgress.bits.idx.idx := resize(stFireIdx.bits, LoadStoreIndex.width())
     }
   }.elsewhen(ldFireIdx.valid && !requestInProgress.valid) {
     val ldEntry = loadQueue(ldFireIdx.bits)
@@ -349,8 +371,9 @@ class MemoryO3()(implicit params: Parameters) extends Module {
       loadQueue(ldFireIdx.bits).fired := true.B
 
       requestInProgress.valid := true.B
-      requestInProgress.bits.rwDirection := MemRWDirection.read
-      requestInProgress.bits.idx := resize(ldFireIdx.bits, LoadStoreIndex.width())
+      requestInProgress.bits.ignore := false.B
+      requestInProgress.bits.idx.rwDirection := MemRWDirection.read
+      requestInProgress.bits.idx.idx := resize(ldFireIdx.bits, LoadStoreIndex.width())
     }
   }.otherwise {
     io.dMem.valid := false.B
@@ -364,9 +387,9 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 
     assert(io.dMemAck.bits.size === log2Ceil(dataBytes).U)
 
-    when(requestInProgress.bits.rwDirection === MemRWDirection.read) {
+    when(requestInProgress.bits.idx.rwDirection === MemRWDirection.read) {
       val storeQueueLen = storeQueueTail - storeQueueHead
-      val ldIdx = requestInProgress.bits.asLoadIndex()
+      val ldIdx = requestInProgress.bits.idx.asLoadIndex()
 
       val value = Wire(Vec(dataWidth, Bool()))
 
@@ -410,14 +433,16 @@ class MemoryO3()(implicit params: Parameters) extends Module {
       loadQueue(ldIdx).data.valid := true.B
       loadQueue(ldIdx).data.bits := value.asUInt
 
-      readOutIdx.valid := true.B
-      readOutIdx.bits := ldIdx
+      when(!requestInProgress.bits.ignore) {
+        readOutIdx.valid := true.B
+        readOutIdx.bits := ldIdx
+      }
     }
 
-    when(requestInProgress.bits.rwDirection === MemRWDirection.write) {
-      assert(storeQueueHead === requestInProgress.bits.asStoreIndex())
+    when(requestInProgress.bits.idx.rwDirection === MemRWDirection.write) {
+      assert(storeQueueHead === requestInProgress.bits.idx.asStoreIndex())
 
-      storeQueue(requestInProgress.bits.asStoreIndex()).reserved := false.B
+      storeQueue(requestInProgress.bits.idx.asStoreIndex()).reserved := false.B
       storeQueueHead := storeQueueTail + 1.U
     }
 
@@ -430,9 +455,12 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     readOutIdx.valid := false.B
 
     assert(loadQueue(readOutIdx.bits).data.valid)
+    assert(loadQueue(readOutIdx.bits).robIdx.valid)
 
     io.readDataOut.valid := true.B
     io.readDataOut.bits.dstReg := loadQueue(readOutIdx.bits).dstReg
+
+    io.readDataOut.bits.robIdx := loadQueue(readOutIdx.bits).robIdx.bits
 
     io.readDataOut.bits.data := readData(loadQueue(readOutIdx.bits).data.bits,
                                           loadQueue(readOutIdx.bits).address.bits,

@@ -11,6 +11,7 @@ object Utils {
   def initStage[T <: Data](stage: Valid[Stage[T]]) = {
     stage.valid := false.B
     stage.bits.pc := PC_INIT.U
+    stage.bits.stage := DontCare
   }
 
   def initStage[T <: Data](stage: Stage[T]) = {

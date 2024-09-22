@@ -2,6 +2,7 @@ package io.riscy.stages
 
 import chisel3.util.{Cat, Fill}
 import chisel3.{Bundle, Input, Module, Mux, Output, PrintableHelper, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
+import io.riscy.stages.signals.Utils.NOP
 import io.riscy.stages.signals.{DecodeSignals, Parameters}
 
 class Decode()(implicit val params: Parameters) extends Module {
@@ -46,7 +47,11 @@ class Decode()(implicit val params: Parameters) extends Module {
   io.signals.rs2 := rs2
   io.signals.rd := rd
 
-  when(OpCode.ADD === io.inst) {
+  when(NOP.U === io.inst) {
+    printf(cf"inst: NOP\n")
+
+    io.signals.aluOp := ExecuteOp.NOP
+  }.elsewhen(OpCode.ADD === io.inst) {
     printf(cf"inst: ADD\n")
 
     io.signals.aluOp := ExecuteOp.ADD

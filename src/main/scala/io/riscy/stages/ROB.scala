@@ -114,7 +114,7 @@ class ROB()(implicit val params: Parameters) extends Module {
   }
 
   when(io.commitRobIdx0.valid) {
-    printf(cf"ROB: committing ${io.commitRobIdx0} @ commitRobIdx0")
+    printf(cf"ROB: committing ${io.commitRobIdx0} @ commitRobIdx0\n")
 
     assert(entries(io.commitRobIdx0.bits).valid, "Invalid instruction being committed")
     assert(!entries(io.commitRobIdx0.bits).bits.committed, "Cannot commit already committed instruction")
@@ -129,7 +129,7 @@ class ROB()(implicit val params: Parameters) extends Module {
   }
 
   when(io.commitRobIdx1.valid) {
-    printf(cf"ROB: committing ${io.commitRobIdx1} @ commitRobIdx1")
+    printf(cf"ROB: committing ${io.commitRobIdx1} @ commitRobIdx1\n")
 
     assert(entries(io.commitRobIdx1.bits).valid, "Invalid instruction being committed")
     assert(!entries(io.commitRobIdx1.bits).bits.committed, "Cannot commit already committed instruction")
@@ -139,6 +139,8 @@ class ROB()(implicit val params: Parameters) extends Module {
 
   // keep commiting the instructions in the case of O3
   when(entries(robHead).valid && entries(robHead).bits.committed) {
+    printf(cf"ROB: retiring rob head: $robHead\n")
+
     val nextRobHead = robHead + 1.U
 
     entries(robHead).valid := false.B
@@ -159,6 +161,8 @@ class ROB()(implicit val params: Parameters) extends Module {
   }
 
   when(io.flush.valid) {
+    printf(cf"flushing: ${io.flush.bits}\n")
+
     assert(entries(io.flush.bits.robIdx).valid, "Flushing entry invalid")
 
     // NOTE: This operation will overwrite the program counter of the flushed instruction

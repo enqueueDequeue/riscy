@@ -1,6 +1,6 @@
 package io.riscy
 
-import chisel3.{Bundle, IO, Input, Module, Output, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, fromLongToLiteral, fromStringToLiteral}
+import chisel3.{Bundle, DontCare, IO, Input, Module, Output, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, fromLongToLiteral, fromStringToLiteral}
 import chiseltest.RawTester.test
 import chiseltest.simulator.WriteVcdAnnotation
 import chiseltest.{VerilatorBackendAnnotation, testableBool, testableClock, testableData}
@@ -1179,6 +1179,7 @@ object Main {
         dut.clock.step()
       }
     }
+    */
 
     {
       // address & data width
@@ -1305,7 +1306,6 @@ object Main {
 
       // todo: add more test cases maybe?
     }
-    */
 
     {
       implicit val params = getParams()
@@ -1358,17 +1358,70 @@ object Main {
         dut.io.iReadValue.valid.poke(false.B)
         dut.io.iReadValue.bits.poke(0.U)
 
-        while(true) {
-          println("waiting...")
+        breakable {
+          while(true) {
+            println("waiting...")
 
-          if (dut.io.dMem.valid.peek().litToBoolean) {
-            println(s"got a memory request @ ${dut.io.dMem.bits.addr.peek().litValue}")
-            return
+            if (dut.io.dMem.valid.peek().litToBoolean) {
+              dut.io.dMem.bits.addr.expect(32.U)
+              dut.io.dMem.bits.size.expect(3.U)
+              dut.io.dMem.bits.write.valid.expect(true.B)
+              dut.io.dMem.bits.write.bits.mask.expect(0b00001111.U)
+              // high bits are supposed to be 0.
+              // So, use integer instead.
+              dut.io.dMem.bits.write.bits.value.expect(java.lang.Integer.reverse(36).U)
+              break
+            }
+
+            dut.clock.step()
           }
-
-          dut.clock.step()
         }
       }
+
+      test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
+        val instructions = Seq(
+          0x00800293L, // ADDI x5, x0, 8
+          0x00000513L, // ADDI x10, x0, 0
+          0x00550533L, // ADD x10, x10, x5
+          0xfff28293L, // ADDI x5, x5, -1
+          0xfe029ce3L, // BNE x5, x0, -8
+          0x00a02023L, // SW x10, 0(x0)
+        )
+
+        println("O3 Loop testing")
+
+        breakable {
+          while(true) {
+            dut.io.iReadAddr.valid.expect(true.B)
+            dut.io.iReadAddr.ready.poke(true.B)
+
+            val instIdx = dut.io.iReadAddr.bits.peek().litValue.intValue / 4
+
+            println(s"Fetching instIdx: $instIdx")
+
+            if (instIdx < instructions.length) {
+              dut.io.iReadValue.valid.poke(true.B)
+              dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
+              dut.io.iReadValue.ready.expect(true.B)
+            } else {
+              dut.io.iReadValue.valid.poke(false.B)
+            }
+
+            if (dut.io.dMem.valid.peek().litToBoolean) {
+              dut.io.dMem.bits.addr.expect(0.U)
+              dut.io.dMem.bits.size.expect(3.U)
+              dut.io.dMem.bits.write.valid.expect(true.B)
+              dut.io.dMem.bits.write.bits.mask.expect(0b11110000.U)
+              dut.io.dMem.bits.write.bits.value.expect(java.lang.Long.reverse(36).U)
+              break
+            }
+
+            dut.clock.step()
+          }
+        }
+      }
+
+      // todo: test load store forwarding and all
     }
 
     println("Compiling")

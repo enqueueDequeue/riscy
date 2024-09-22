@@ -300,8 +300,9 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 
         if (idx < nLdQEntries) {
           val ldIdx = loadQueueHead + idx.U
+          val loadQueueLen = loadQueueTail - loadQueueHead
 
-          val valid = align(loadQueue(ldIdx).address.bits, dataBytes) === align(storeQueue(stIdx).address.bits, dataBytes)
+          val valid = ldIdx < loadQueueLen && align(loadQueue(ldIdx).address.bits, dataBytes) === align(storeQueue(stIdx).address.bits, dataBytes)
 
           flushIdxW.valid := valid
           flushIdxW.bits := loadQueue(ldIdx).robIdx.bits

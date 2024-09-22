@@ -46,6 +46,9 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
   // the actual instruction data to be stored
   val stations = Mem(nEntries, UInt(log2Ceil(nROBEntries).W))
 
+  // todo: modify map to be able to wake up
+  //       the instruction in the same cycle as it gets ready
+  //       and make the register read the same cycle as of IQ
   // width = nEntries
   // height = nPhyRegs
   val map = RegInit(VecInit(Seq.fill(nPhyRegs * nEntries)(false.B)))

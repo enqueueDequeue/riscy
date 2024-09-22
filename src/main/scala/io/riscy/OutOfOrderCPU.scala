@@ -3,7 +3,7 @@ package io.riscy
 import chisel3.util.{Decoupled, Valid, log2Ceil}
 import chisel3.{Bool, Bundle, DontCare, Flipped, Module, Mux, PrintableHelper, RegInit, UInt, Vec, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.OutOfOrderCPU.isValid
-import io.riscy.stages.signals.Utils.{NOP, PC_INIT, initFetchSignals, initStage, initValid}
+import io.riscy.stages.signals.Utils.{NOP, initStage, initValid}
 import io.riscy.stages.signals.{AllocSignals, DecodeSignals, FetchSignals, Parameters, ROBSignals, RegReadSignals, RenameSignals, Stage}
 import io.riscy.stages.{Decode, Execute, ExecuteOp, Fetch, InstructionQueue, LoadStoreIndex, MemRWDirection, MemRWSize, MemoryO3, PhyRegs, ROB, Rename}
 
@@ -384,7 +384,10 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
     val robIdx = UInt(log2Ceil(nROBEntries).W)
   }))
 
-  when(rrExMemSignals.valid) {
+  when(rrExMemSignals.valid
+       && !isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memRead)
+       && !isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memWrite)) {
+
     val rs1ValueIntermediate = Mux(rrExMemSignals.bits.stage.rob.decodeSignals.rs1 === 0.U, 0.U, rrExMemSignals.bits.stage.regRead.rs1Value)
     val rs2ValueIntermediate = Mux(rrExMemSignals.bits.stage.rob.decodeSignals.rs2 === 0.U, 0.U, rrExMemSignals.bits.stage.regRead.rs2Value)
 
@@ -475,6 +478,14 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   }
 
   // Memory
+
+  // NOTE: Using execute port to sneakily commit memory data.
+  //       A store upon reaching the Memory stage is deemed to be commited.
+  when(rrExMemSignals.valid && isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memWrite)) {
+    rob.io.commitRobIdx0.valid := true.B
+    rob.io.commitRobIdx0.bits := rrExMemSignals.bits.stage.rob.allocSignals.robIdx
+  }
+
   memory.io.dMem <> io.dMem
   memory.io.dMemAck <> io.dMemAck
 
@@ -513,6 +524,9 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   memory.io.commitIdx.bits := rob.io.retireInst.bits.signals.allocSignals.memIdx.bits
 
   val memFlushIdx = memory.io.flushIdx
+
+  printf(cf"O3: exFlushIdx: $exFlushIdx\n")
+  printf(cf"O3: memFlushIdx: $memFlushIdx\n")
 
   when(!exFlushIdx.valid && !memFlushIdx.valid) {
     rob.io.flush.valid := false.B

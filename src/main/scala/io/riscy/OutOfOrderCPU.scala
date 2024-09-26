@@ -375,6 +375,9 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   }
 
   // Running Execute and Memory stages in parallel
+  printf(cf"O3: rs1: ${rrExMemSignals.bits.stage.rob.renameSignals.rs1PhyReg} = ${rrExMemSignals.bits.stage.regRead.rs1Value}\n")
+  printf(cf"O3: rs2: ${rrExMemSignals.bits.stage.rob.renameSignals.rs2PhyReg} = ${rrExMemSignals.bits.stage.regRead.rs2Value}\n")
+  printf(cf"O3: immediate: ${rrExMemSignals.bits.stage.rob.decodeSignals.immediate}\n")
 
   // Execute
   val execute = Module(new Execute())
@@ -448,6 +451,8 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
       registers.io.rdEn := true.B
       registers.io.rd := dstReg
       registers.io.rdValue := result
+
+      printf(cf"O3: rd: robIdx -> ${rrExMemSignals.bits.stage.rob.robIdx} dst: $dstReg = $result\n")
     }.otherwise {
       registers.io.rdEn := false.B
       registers.io.rd := DontCare
@@ -510,6 +515,8 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
     registers.io.rd2En := true.B
     registers.io.rd2 := memory.io.readDataOut.bits.dstReg.bits
     registers.io.rd2Value := memory.io.readDataOut.bits.data
+
+    printf(cf"O3: rd2: ${memory.io.readDataOut.bits.dstReg.bits} = ${memory.io.readDataOut.bits.data}\n")
   }.otherwise {
     registers.io.rd2En := false.B
     registers.io.rd2 := DontCare
@@ -520,8 +527,8 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   rob.io.commitRobIdx1.bits := memory.io.readDataOut.bits.robIdx
 
   // Commit
-  memory.io.commitIdx.valid := rob.io.retireInst.valid && !rob.io.retireInst.bits.flush && rob.io.retireInst.bits.signals.allocSignals.memIdx.valid
-  memory.io.commitIdx.bits := rob.io.retireInst.bits.signals.allocSignals.memIdx.bits
+  memory.io.retireIdx.valid := rob.io.retireInst.valid && !rob.io.retireInst.bits.flush && rob.io.retireInst.bits.signals.allocSignals.memIdx.valid
+  memory.io.retireIdx.bits := rob.io.retireInst.bits.signals.allocSignals.memIdx.bits
 
   val memFlushIdx = memory.io.flushIdx
 

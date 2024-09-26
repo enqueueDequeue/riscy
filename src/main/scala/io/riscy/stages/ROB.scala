@@ -81,6 +81,8 @@ class ROB()(implicit val params: Parameters) extends Module {
     io.allocatedIdx.valid := true.B
     io.allocatedIdx.bits := robTail
 
+    entries(robTail).valid := false.B
+
     robTail := robTail + 1.U
   }.otherwise {
     printf(cf"ROB: Didn't allocate: head: $robHead, tail: $robTail, allocate: ${io.allocate}\n")
@@ -138,8 +140,8 @@ class ROB()(implicit val params: Parameters) extends Module {
   }
 
   // keep commiting the instructions in the case of O3
-  when(entries(robHead).valid && entries(robHead).bits.committed) {
-    printf(cf"ROB: retiring rob head: $robHead\n")
+  when(entries(robHead).valid && entries(robHead).bits.committed && robHead =/= robTail) {
+    printf(cf"ROB: retiring rob head: $robHead, tail: $robTail\n")
 
     val nextRobHead = robHead + 1.U
 
@@ -151,6 +153,7 @@ class ROB()(implicit val params: Parameters) extends Module {
     io.retireInst.bits.signals := entries(robHead).bits.data
 
     when(entries(robHead).bits.flush) {
+      printf(cf"ROB: flushing\n")
       robTail := nextRobHead
     }
 
@@ -161,7 +164,7 @@ class ROB()(implicit val params: Parameters) extends Module {
   }
 
   when(io.flush.valid) {
-    printf(cf"flushing: ${io.flush.bits}\n")
+    printf(cf"ROB: flushing: ${io.flush.bits}\n")
 
     assert(entries(io.flush.bits.robIdx).valid, "Flushing entry invalid")
 

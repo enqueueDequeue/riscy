@@ -140,6 +140,8 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
   when(io.instSignals.valid) {
     val stationIdx = io.instSignals.bits.iqIdx
 
+    printf(cf"IQ: occupying: $stationIdx -> ${io.instSignals.bits}\n")
+
     stations(stationIdx) := io.instSignals.bits.robIdx
 
     // only depend if the register needs to be ready actually
@@ -177,9 +179,12 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
 
   when(io.flush) {
     allocations := 0.U
+    occupancies := 0.U
   }
 
   printf(cf"IQ: allocations: |$allocations%b|\n")
+  printf(cf"IQ: occupancies: |$occupancies%b|\n")
+  printf(cf"IQ: wakeupRegs: ${io.wakeUpRegs}%b\n")
   printf(cf"IQ: readyInsts: $readyInsts\n")
   printf(cf"IQ: readyInstIdx: $readyInstIdx\n")
 

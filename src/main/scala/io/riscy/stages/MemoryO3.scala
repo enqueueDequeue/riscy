@@ -25,7 +25,7 @@ class LoadQueueEntry()(implicit params: Parameters) extends Bundle {
 // endianness mask(0) == true => data(7:0) is valid to be written
 class StoreQueueEntry()(implicit params: Parameters) extends Bundle {
   val reserved = Bool()
-  val committed = Bool()
+  val retired = Bool()
   val fired = Bool()
   val size = MemRWSize()
   val data = Valid(UInt(params.dataWidth.W))
@@ -66,7 +66,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     val allocate = Input(Valid(MemRWDirection()))
     val allocatedIdx = Output(Valid(new LoadStoreIndex()))
 
-    val commitIdx = Input(Valid(new LoadStoreIndex()))
+    val retireIdx = Input(Valid(new LoadStoreIndex()))
     val flushIdx = Output(Valid(UInt(log2Ceil(nROBEntries).W)))
 
     val readData = Input(Valid(new Bundle {
@@ -134,6 +134,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 
   val storeQueueHead = RegInit(0.U(log2Ceil(nStQEntries).W))
   val storeQueueTail = RegInit(0.U(log2Ceil(nStQEntries).W))
+  val storeRetireTail = RegInit(0.U(log2Ceil(nStQEntries).W))
 
   val readOutIdx = RegInit({
     val initSignals = Wire(Valid(UInt(log2Ceil(nLdQEntries).W)))
@@ -174,7 +175,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
       idxW.valid := true.B
       idxW.bits := idx.U
 
-      (stEntry.reserved && stEntry.committed && !stEntry.fired, idxW)
+      (stEntry.reserved && stEntry.retired && !stEntry.fired, idxW)
     } else {
       idxW.valid := false.B
       idxW.bits := DontCare
@@ -193,8 +194,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     loadQueueHead := 0.U
     loadQueueTail := 0.U
 
-    storeQueueHead := 0.U
-    storeQueueTail := 0.U
+    storeQueueTail := storeRetireTail
 
     requestInProgress.bits.ignore := true.B
 
@@ -212,6 +212,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 
       when(ldCanAllocate) {
         loadQueue(loadQueueTail).reserved := true.B
+        loadQueue(loadQueueTail).address.valid := false.B
         loadQueue(loadQueueTail).fired := false.B
         loadQueue(loadQueueTail).data.valid := false.B
 
@@ -224,7 +225,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 
       when(stCanAllocate) {
         storeQueue(storeQueueTail).reserved := true.B
-        storeQueue(storeQueueTail).committed := false.B
+        storeQueue(storeQueueTail).retired := false.B
         storeQueue(storeQueueTail).fired := false.B
 
         storeQueueTail := storeQueueTail + 1.U
@@ -240,6 +241,8 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     val address = io.readData.bits.address
     val dstReg = io.readData.bits.dstReg
     val robIdx = io.readData.bits.robIdx
+
+    printf(cf"Memory: ldIdx: $ldIdx size: $size address: $address dstReg: $dstReg robIdx: $robIdx\n")
 
     loadQueue(ldIdx).size := size
     loadQueue(ldIdx).address.valid := true.B
@@ -258,6 +261,8 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     val address = io.writeData.bits.address
     val data = io.writeData.bits.data
 
+    printf(cf"Memory: stIdx: $stIdx size: $size address: $address\n")
+
     storeQueue(stIdx).size := size
     storeQueue(stIdx).address.valid := true.B
     storeQueue(stIdx).address.bits := address
@@ -267,9 +272,11 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     storeQueue(stIdx).mask.bits := mask(address, size, dataBytes)
   }
 
-  when(io.commitIdx.valid) {
+  when(io.retireIdx.valid) {
+    printf(cf"Memory: Retiring: ${io.retireIdx}\n")
+
     // NOTE:
-    // When a store is committed, it has to check
+    // When a store is retired, it has to check
     // the loadQueue to check if any loads has loaded the same address
     // If they did, and it's younger (which is always the case)
     // the oldest of those loads and the following instructions must be flushed
@@ -278,22 +285,29 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     // the stores storing to the same location and try to load from them
 
     // NOTE:
-    // load entries are deallocated as soon as they are committed
+    // load entries are deallocated as soon as they are retired
     // store entries are deallocated as they are issued to the memory
 
-    when(io.commitIdx.bits.rwDirection === MemRWDirection.read) {
-      assert(io.commitIdx.bits.asLoadIndex() === loadQueueHead)
+    when(io.retireIdx.bits.rwDirection === MemRWDirection.read) {
+      assert(io.retireIdx.bits.asLoadIndex() === loadQueueHead, cf"loadQueueHead: $loadQueueHead retireIdx: ${io.retireIdx.bits.asLoadIndex()}\n")
 
-      loadQueue(io.commitIdx.bits.asLoadIndex()).reserved := false.B
+      loadQueue(io.retireIdx.bits.asLoadIndex()).reserved := false.B
       loadQueueHead := loadQueueHead + 1.U
     }
 
-    when(io.commitIdx.bits.rwDirection === MemRWDirection.write) {
-      val stIdx = io.commitIdx.bits.asStoreIndex()
-
-      storeQueue(stIdx).committed := true.B
+    when(io.retireIdx.bits.rwDirection === MemRWDirection.write) {
+      val stIdx = io.retireIdx.bits.asStoreIndex()
+      val stAddr = storeQueue(stIdx).address.bits
 
       assert(storeQueue(stIdx).address.valid)
+      assert(storeRetireTail === stIdx, cf"retire $stIdx != retire tail $storeRetireTail\n")
+
+      printf(cf"Memory: retiring: $stIdx\n")
+
+      storeQueue(stIdx).retired := true.B
+      storeRetireTail := storeRetireTail + 1.U
+
+      printf(cf"Memory: loadQueueTail: $loadQueueTail loadQueueHead: $loadQueueHead\n")
 
       val flushIdx = PriorityMux(Seq.tabulate(nLdQEntries + 1) { idx =>
         val flushIdxW = Wire(Valid(UInt(log2Ceil(nROBEntries).W)))
@@ -302,10 +316,14 @@ class MemoryO3()(implicit params: Parameters) extends Module {
           val ldIdx = loadQueueHead + idx.U
           val loadQueueLen = loadQueueTail - loadQueueHead
 
-          val valid = ldIdx < loadQueueLen && align(loadQueue(ldIdx).address.bits, dataBytes) === align(storeQueue(stIdx).address.bits, dataBytes)
+          val valid = idx.U < loadQueueLen && loadQueue(ldIdx).address.valid && align(loadQueue(ldIdx).address.bits, dataBytes) === align(stAddr, dataBytes)
+
+          val robIdx = loadQueue(ldIdx).robIdx.bits
 
           flushIdxW.valid := valid
-          flushIdxW.bits := loadQueue(ldIdx).robIdx.bits
+          flushIdxW.bits := robIdx
+
+          printf(cf"Memory: ldIdx: $ldIdx, valid: $valid robIdx: $robIdx\n")
 
           (valid, flushIdxW)
         } else {
@@ -356,6 +374,8 @@ class MemoryO3()(implicit params: Parameters) extends Module {
       requestInProgress.bits.idx.rwDirection := MemRWDirection.write
       requestInProgress.bits.idx.idx := resize(stFireIdx.bits, LoadStoreIndex.width())
     }
+
+    printf(cf"Memory: store fired entry: ${stFireIdx.bits} => $stEntry\n")
   }.elsewhen(ldFireIdx.valid && !requestInProgress.valid) {
     val ldEntry = loadQueue(ldFireIdx.bits)
 
@@ -376,13 +396,24 @@ class MemoryO3()(implicit params: Parameters) extends Module {
       requestInProgress.bits.idx.rwDirection := MemRWDirection.read
       requestInProgress.bits.idx.idx := resize(ldFireIdx.bits, LoadStoreIndex.width())
     }
+
+    printf(cf"Memory: load fired entry: ${ldFireIdx.bits} => $ldEntry\n")
   }.otherwise {
     io.dMem.valid := false.B
     io.dMem.bits := DontCare
+
+    printf(cf"Memory: no memory transaction this cycle\n")
+  }
+
+  // hold the values when the request is in progress
+  when(requestInProgress.valid) {
+    // todo: hold the signals
   }
 
   when(io.dMemAck.valid) {
     val ackData = io.dMemAck.deq()
+
+    printf(cf"Memory: ack: $ackData\n")
 
     assert(requestInProgress.valid)
 
@@ -405,7 +436,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 
         val stEntry = storeQueue(idx)
 
-        when(off.U < storeQueueLen && stEntry.reserved && stEntry.committed) {
+        when(off.U < storeQueueLen && stEntry.reserved && stEntry.retired) {
           assert(stEntry.address.valid)
           assert(stEntry.data.valid)
           assert(stEntry.mask.valid)
@@ -441,10 +472,10 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     }
 
     when(requestInProgress.bits.idx.rwDirection === MemRWDirection.write) {
-      assert(storeQueueHead === requestInProgress.bits.idx.asStoreIndex())
+      assert(storeQueueHead === requestInProgress.bits.idx.asStoreIndex(), cf"storeQueueHead: $storeQueueHead, rip: $requestInProgress")
 
       storeQueue(requestInProgress.bits.idx.asStoreIndex()).reserved := false.B
-      storeQueueHead := storeQueueTail + 1.U
+      storeQueueHead := storeQueueHead + 1.U
     }
 
     requestInProgress.valid := false.B

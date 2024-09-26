@@ -1,5 +1,6 @@
 package io.riscy
 
+import chisel3.util.log2Ceil
 import chisel3.{Bundle, DontCare, IO, Input, Module, Output, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, fromLongToLiteral, fromStringToLiteral}
 import chiseltest.RawTester.test
 import chiseltest.simulator.WriteVcdAnnotation
@@ -829,15 +830,19 @@ object Main {
       implicit val params = getParams(nPhyRegs = 8, nIQEntries = 4)
 
       test(new InstructionQueue()) { dut =>
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(0.U)
+
         dut.io.wakeUpRegs.poke(0x0.U)
 
         dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.iqIdx.poke(0.U)
         dut.io.instSignals.bits.robIdx.poke(1.U)
         dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
         dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs2PhyReg.bits.poke(3.U)
-        dut.io.iqIdx.valid.expect(true.B)
         dut.clock.step()
 
         dut.io.instSignals.valid.poke(false.B)
@@ -1179,7 +1184,6 @@ object Main {
         dut.clock.step()
       }
     }
-    */
 
     {
       // address & data width
@@ -1306,10 +1310,12 @@ object Main {
 
       // todo: add more test cases maybe?
     }
+    */
 
     {
       implicit val params = getParams()
 
+      /*
       test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
         val instructions = Seq(
           0x00800293L, // ADDI x5, x0, 8
@@ -1420,8 +1426,194 @@ object Main {
           }
         }
       }
+      */
 
-      // todo: test load store forwarding and all
+      test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
+        val instructions = Seq(
+          // set return address to out of bounds
+          0x40000093L,
+          // update stack size = 4096
+          0x40000113L,
+          0x40010113L,
+          0x40010113L,
+          0x40010113L,
+          // actual instructions
+          0xfa010113L,
+          0x04113c23L,
+          0x00100513L,
+          0x00a13423L,
+          0x00700513L,
+          0x00a13823L,
+          0x00600513L,
+          0x00a13c23L,
+          0x00500513L,
+          0x02a13023L,
+          0x00900513L,
+          0x02a13423L,
+          0x00400513L,
+          0x02a13823L,
+          0x02013c23L,
+          0x00200513L,
+          0x04a13023L,
+          0x00300513L,
+          0x04a13423L,
+          0x00800513L,
+          0x04a13823L,
+          0x00900593L,
+          0x00810613L,
+          0x00000513L,
+          0x010000efL,
+          0x05813083L,
+          0x06010113L,
+          0x00008067L,
+          0xfd010113L,
+          0x02113423L,
+          0x02813023L,
+          0x00913c23L,
+          0x01213823L,
+          0x01313423L,
+          0x00060993L,
+          0x00058913L,
+          0x00359413L,
+          0x00c40433L,
+          0x02c0006fL,
+          0x00349593L,
+          0x013585b3L,
+          0x00043603L,
+          0x0005b683L,
+          0x00c5b023L,
+          0x00d43023L,
+          0xfff4859bL,
+          0x00098613L,
+          0xfb5ff0efL,
+          0x00048513L,
+          0x05255263L,
+          0x00043583L,
+          0x00351613L,
+          0x01360633L,
+          0x00050493L,
+          0x00c0006fL,
+          0x00860613L,
+          0xfa860ee3L,
+          0x00063683L,
+          0xfed5cae3L,
+          0x00349713L,
+          0x01370733L,
+          0x00073783L,
+          0x00d73023L,
+          0x00f63023L,
+          0x0014849bL,
+          0xfd9ff06fL,
+          0x02813083L,
+          0x02013403L,
+          0x01813483L,
+          0x01013903L,
+          0x00813983L,
+          0x03010113L,
+          0x00008067L,
+          // buffering a few instructions at the end
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+        )
+
+        println("O3 Quick Sort testing")
+
+        val memSize = 4096
+        val memory = new Array[Byte](memSize)
+
+        for (i <- memory.indices) {
+          memory(i) = 0.toByte
+        }
+
+        println(memory.mkString("memory: (", ", ", ")"))
+
+        var ackValid = false
+        var ackSize = 0
+        var readValue = 0
+
+        breakable {
+          while(true) {
+            dut.io.iReadAddr.valid.expect(true.B)
+            dut.io.iReadAddr.ready.poke(true.B)
+
+            val instIdx = dut.io.iReadAddr.bits.peek().litValue.intValue / 4
+
+            println(s"Fetching instIdx: $instIdx")
+
+            if (instIdx == 1024) {
+              println("program returned")
+              break
+            } else if (instIdx < instructions.length) {
+              dut.io.iReadValue.valid.poke(true.B)
+              dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
+              dut.io.iReadValue.ready.expect(true.B)
+            } else {
+              dut.io.iReadValue.valid.poke(false.B)
+            }
+
+            if (ackValid) {
+              ackValid = false
+
+//              require(dut.io.dMem.valid.peek().litToBoolean)
+//              require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
+
+              dut.io.dMemAck.valid.poke(true.B)
+              dut.io.dMemAck.bits.value.poke(true.B)
+              dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
+              dut.io.dMemAck.ready.expect(true.B)
+            } else if (dut.io.dMem.valid.peek().litToBoolean) {
+              dut.io.dMem.ready.poke(true.B)
+
+              val addr = dut.io.dMem.bits.addr.peek().litValue.toInt
+              val size = 1 << dut.io.dMem.bits.size.peek().litValue.intValue
+              val write = dut.io.dMem.bits.write.valid.peek().litToBoolean
+
+              println(s"addr: $addr size: $size write: $write")
+
+              if (write) {
+                var writeVal = dut.io.dMem.bits.write.bits.value.peek().litValue.toLong
+                var writeMask = dut.io.dMem.bits.write.bits.mask.peek().litValue.toInt
+
+                for (off <- 0 until size) {
+                  if (0 != (writeMask & 1)) {
+                    memory(addr + off) = (writeVal & 0xFF).toByte
+                  }
+
+                  writeVal = writeVal >>> 8
+                  writeMask = writeMask >>> 1
+                }
+
+                ackSize = size
+              } else {
+                ackSize = size
+                readValue = 0
+
+                if (addr + size < memSize) {
+                  for (off <- 0 until size) {
+                    var memValue = memory(addr + off).toInt
+
+                    memValue = (memValue << 24) >>> 24
+
+                    readValue = readValue << 8
+                    readValue = readValue | memValue
+                  }
+                }
+              }
+
+              ackValid = true
+              dut.io.dMemAck.valid.poke(false.B)
+            } else {
+              dut.io.dMemAck.valid.poke(false.B)
+            }
+
+            dut.clock.step()
+          }
+        }
+      }
     }
 
     println("Compiling")

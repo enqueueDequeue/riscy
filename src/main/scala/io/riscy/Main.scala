@@ -1,7 +1,7 @@
 package io.riscy
 
 import chisel3.util.log2Ceil
-import chisel3.{Bundle, DontCare, IO, Input, Module, Output, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, fromLongToLiteral, fromStringToLiteral}
+import chisel3.{Bundle, DontCare, IO, Input, Module, Output, UInt, fromBigIntToLiteral, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, fromLongToLiteral, fromStringToLiteral}
 import chiseltest.RawTester.test
 import chiseltest.simulator.WriteVcdAnnotation
 import chiseltest.{VerilatorBackendAnnotation, testableBool, testableClock, testableData}
@@ -15,7 +15,7 @@ import scala.util.control.Breaks.{break, breakable}
 
 object Main {
 
-  def toInt(memory: Array[Byte]): Int = {
+  def toInt(memory: Array[Byte]): String = {
     var memValue: Int = 0
 
     require(memory.length == 4)
@@ -30,10 +30,10 @@ object Main {
       memValue = memValue | value
     }
 
-    memValue
+    memValue.toString
   }
 
-  def toLong(memory: Array[Byte]): Long = {
+  def toLong(memory: Array[Byte]): String = {
     var memValue: Long = 0
 
     require(memory.length == 8)
@@ -48,11 +48,31 @@ object Main {
       memValue = memValue | value
     }
 
-    memValue
+    memValue.toString
   }
 
-  def printMem(memory: Array[Byte], wordLen: Int = 4, wordGen: Array[Byte] => Number = toInt): Unit = {
+  def toRevLongHex(memory: Array[Byte]): String = {
+    var memValue: Long = 0
+
+    require(memory.length == 8)
+
+    for (idx <- 0 until 8) {
+      var value = memory(idx).toLong
+
+      value = value << 56
+      value = value >>> 56
+
+      memValue = memValue << 8
+      memValue = memValue | value
+    }
+
+    java.lang.Long.reverse(memValue).toHexString
+  }
+
+  def printMem(memory: Array[Byte], wordLen: Int = 4, wordGen: Array[Byte] => String = toInt): Unit = {
     val factor = 256
+
+    println("Main: memory: ")
 
     for (idxX <- memory.indices by factor) {
       for (idxY <- 0 until factor by wordLen) {
@@ -1316,6 +1336,7 @@ object Main {
       implicit val params = getParams()
 
       /*
+      println("Main: Dependency Testing Start")
       test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
         val instructions = Seq(
           0x00800293L, // ADDI x5, x0, 8
@@ -1376,6 +1397,8 @@ object Main {
               // high bits are supposed to be 0.
               // So, use integer instead.
               dut.io.dMem.bits.write.bits.value.expect(java.lang.Integer.reverse(36).U)
+
+              println("O3 dep test success")
               break
             }
 
@@ -1383,7 +1406,9 @@ object Main {
           }
         }
       }
+      println("Main: Dependency Testing Finish")
 
+      println("Main: Loop Testing Start")
       test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
         val instructions = Seq(
           0x00800293L, // ADDI x5, x0, 8
@@ -1419,6 +1444,8 @@ object Main {
               dut.io.dMem.bits.write.valid.expect(true.B)
               dut.io.dMem.bits.write.bits.mask.expect(0b11110000.U)
               dut.io.dMem.bits.write.bits.value.expect(java.lang.Long.reverse(36).U)
+
+              println("O3 loop test success")
               break
             }
 
@@ -1426,8 +1453,432 @@ object Main {
           }
         }
       }
+      println("Main: Loop Testing Finish")
+
+      println("Main: LD/ST Forward Testing Start")
+      test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
+        val instructions = Seq(
+          // update the return address
+          0x40000093L, // ADDI x1, x0, 1024
+          // update stack size = 1024
+          0x40000113L, // ADDI x2, x0, 1024
+          // actual program
+          0xfe010113L, // ADDI x2, x2, -32
+          0x00113c23L, // SD x1, 24(x2)
+          0x01813283L, // LD x5, 24(x2)
+          0x00513823L, // SD x5, 16(x2)
+          0x00008067L, // JALR x0, 0(x1)
+        )
+
+        println("O3 load store forwarding testing")
+
+        val memSize = 1024
+        val memory = new Array[Byte](memSize)
+
+        for (i <- memory.indices) {
+          memory(i) = 0.toByte
+        }
+
+        printMem(memory, 8, toRevLongHex)
+
+        var ackValid = false
+        var ackSize = 0
+        var readValue = 0L
+
+        var completed = false
+        var countDown = 0
+
+        breakable {
+          while(true) {
+            if (completed) {
+              if (0 == countDown) {
+                println("program returned")
+                break
+              }
+
+              countDown -= 1
+            }
+
+            dut.io.iReadAddr.valid.expect(true.B)
+            dut.io.iReadAddr.ready.poke(true.B)
+
+            val instIdx = dut.io.iReadAddr.bits.peek().litValue.intValue / 4
+
+            println(s"Fetching instIdx: $instIdx")
+
+            if (instIdx == 256) {
+              if (!completed) {
+                // wait for the retires to complete
+                completed = true
+                countDown = 100
+              }
+            } else if (instIdx < instructions.length) {
+              dut.io.iReadValue.valid.poke(true.B)
+              dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
+              dut.io.iReadValue.ready.expect(true.B)
+            } else {
+              dut.io.iReadValue.valid.poke(false.B)
+            }
+
+            if (ackValid) {
+              ackValid = false
+
+              // require(dut.io.dMem.valid.peek().litToBoolean)
+              // require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
+
+              dut.io.dMemAck.valid.poke(true.B)
+              dut.io.dMemAck.bits.value.poke(readValue.U)
+              dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
+              dut.io.dMemAck.ready.expect(true.B)
+            } else if (dut.io.dMem.valid.peek().litToBoolean) {
+              dut.io.dMem.ready.poke(true.B)
+
+              val addr = dut.io.dMem.bits.addr.peek().litValue.toInt
+              val size = 1 << dut.io.dMem.bits.size.peek().litValue.intValue
+              val write = dut.io.dMem.bits.write.valid.peek().litToBoolean
+
+              println(s"addr: $addr size: $size write: $write")
+
+              if (write) {
+                var writeVal = dut.io.dMem.bits.write.bits.value.peek().litValue.toLong
+                var writeMask = dut.io.dMem.bits.write.bits.mask.peek().litValue.toInt
+
+                println(s"Main: writing: ${writeVal.toHexString}, mask: ${writeMask.toBinaryString}")
+
+                for (rOff <- 0 until size) {
+                  val off = size - rOff - 1
+
+                  if (0 != (writeMask & 1)) {
+                    memory(addr + off) = (writeVal & 0xFF).toByte
+                  }
+
+                  writeVal = writeVal >>> 8
+                  writeMask = writeMask >>> 1
+                }
+
+                ackSize = size
+              } else {
+                ackSize = size
+                readValue = 0
+
+                if (addr + size <= memSize) {
+                  for (off <- 0 until size) {
+                    var memValue = memory(addr + off).toInt
+
+                    memValue = (memValue << 24) >>> 24
+
+                    readValue = readValue << 8
+                    readValue = readValue | memValue
+                  }
+                }
+
+                println(s"Main: reading: ${readValue.toHexString}")
+              }
+
+              ackValid = true
+              dut.io.dMemAck.valid.poke(false.B)
+            } else {
+              dut.io.dMemAck.valid.poke(false.B)
+            }
+
+            dut.clock.step()
+          }
+        }
+
+        printMem(memory, 8, toRevLongHex)
+
+        require(toRevLongHex(memory.slice(1008, 1016)) == "400")
+        require(toRevLongHex(memory.slice(1016, 1024)) == "400")
+      }
+      println("Main: LD/ST Forward Testing Finish")
+
+      println("Main: ST Testing Start")
+      test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
+        val instructions = Seq(
+          // update the return address
+          0x40000093L,
+          // update stack size = 1024
+          0x40000113L,
+          // actual program
+          0xfe010113L,
+          0x00113c23L,
+          0x00813823L,
+          0x02010413L,
+          0x00700513L,
+          0xfea42023L,
+          0x00600513L,
+          0xfea42223L,
+          0x00500513L,
+          0xfea42423L,
+          0x00400513L,
+          0xfea42623L,
+          0x00000513L,
+          0x01813083L,
+          0x01013403L,
+          0x02010113L,
+          0x00008067L,
+          // buffering a few instructions at the end
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+        )
+
+        println("O3 store testing")
+
+        val memSize = 1024
+        val memory = new Array[Byte](memSize)
+
+        for (i <- memory.indices) {
+          memory(i) = 0.toByte
+        }
+
+        printMem(memory, 8, toRevLongHex)
+
+        var ackValid = false
+        var ackSize = 0
+        var readValue = 0L
+
+        breakable {
+          while(true) {
+            dut.io.iReadAddr.valid.expect(true.B)
+            dut.io.iReadAddr.ready.poke(true.B)
+
+            val instIdx = dut.io.iReadAddr.bits.peek().litValue.intValue / 4
+
+            println(s"Fetching instIdx: $instIdx")
+
+            if (instIdx == 256) {
+              dut.clock.step(100)
+              println("program returned")
+              break
+            } else if (instIdx < instructions.length) {
+              dut.io.iReadValue.valid.poke(true.B)
+              dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
+              dut.io.iReadValue.ready.expect(true.B)
+            } else {
+              dut.io.iReadValue.valid.poke(false.B)
+            }
+
+            if (ackValid) {
+              ackValid = false
+
+              // require(dut.io.dMem.valid.peek().litToBoolean)
+              // require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
+
+              dut.io.dMemAck.valid.poke(true.B)
+              dut.io.dMemAck.bits.value.poke(readValue.U)
+              dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
+              dut.io.dMemAck.ready.expect(true.B)
+            } else if (dut.io.dMem.valid.peek().litToBoolean) {
+              dut.io.dMem.ready.poke(true.B)
+
+              val addr = dut.io.dMem.bits.addr.peek().litValue.toInt
+              val size = 1 << dut.io.dMem.bits.size.peek().litValue.intValue
+              val write = dut.io.dMem.bits.write.valid.peek().litToBoolean
+
+              println(s"addr: $addr size: $size write: $write")
+
+              if (write) {
+                var writeVal = dut.io.dMem.bits.write.bits.value.peek().litValue.toLong
+                var writeMask = dut.io.dMem.bits.write.bits.mask.peek().litValue.toInt
+
+                println(s"Main: writing: ${writeVal.toHexString}, mask: ${writeMask.toBinaryString}")
+
+                for (rOff <- 0 until size) {
+                  val off = size - rOff - 1
+
+                  if (0 != (writeMask & 1)) {
+                    memory(addr + off) = (writeVal & 0xFF).toByte
+                  }
+
+                  writeVal = writeVal >>> 8
+                  writeMask = writeMask >>> 1
+                }
+
+                ackSize = size
+              } else {
+                ackSize = size
+                readValue = 0
+
+                if (addr + size <= memSize) {
+                  for (off <- 0 until size) {
+                    var memValue = memory(addr + off).toInt
+
+                    memValue = (memValue << 24) >>> 24
+
+                    readValue = readValue << 8
+                    readValue = readValue | memValue
+                  }
+                }
+
+                println(s"Main: reading: ${readValue.toHexString}")
+              }
+
+              ackValid = true
+              dut.io.dMemAck.valid.poke(false.B)
+            } else {
+              dut.io.dMemAck.valid.poke(false.B)
+            }
+
+            dut.clock.step()
+          }
+        }
+
+        printMem(memory, 8, toRevLongHex)
+      }
+      println("Main: ST Testing Finish")
       */
 
+      // todo: test the store buffer forwarding
+
+      println("Main: CUM SUM Testing Start")
+      test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
+        val instructions = Seq(
+          // update the return address
+          0x40000093L,
+          // update stack size = 1024
+          0x40000113L,
+          // actual program
+          0xfe010113L,
+          0x00700513L,
+          0x00a13023L,
+          0x00810593L,
+          0x00600613L,
+          0x00c13423L,
+          0x00500613L,
+          0x00c13823L,
+          0x00400613L,
+          0x00c13c23L,
+          0x02010613L,
+          0x0005b683L,
+          0x00d50533L,
+          0x00a5b023L,
+          0x00858593L,
+          0xfec598e3L,
+          0x00000513L,
+          0x02010113L,
+          0x00008067L,
+          // buffering a few instructions at the end
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+        )
+
+        println("O3 sum testing")
+
+        val memSize = 1024
+        val memory = new Array[Byte](memSize)
+
+        for (i <- memory.indices) {
+          memory(i) = 0.toByte
+        }
+
+        printMem(memory, 8, toRevLongHex)
+
+        var ackValid = false
+        var ackSize = 0
+        var readValue = 0L
+
+        breakable {
+          while(true) {
+            dut.io.iReadAddr.valid.expect(true.B)
+            dut.io.iReadAddr.ready.poke(true.B)
+
+            val instIdx = dut.io.iReadAddr.bits.peek().litValue.intValue / 4
+
+            println(s"Fetching instIdx: $instIdx")
+
+            if (instIdx == 256) {
+              dut.clock.step(100)
+              println("program returned")
+              break
+            } else if (instIdx < instructions.length) {
+              dut.io.iReadValue.valid.poke(true.B)
+              dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
+              dut.io.iReadValue.ready.expect(true.B)
+            } else {
+              dut.io.iReadValue.valid.poke(false.B)
+            }
+
+            if (ackValid) {
+              ackValid = false
+
+              // require(dut.io.dMem.valid.peek().litToBoolean)
+              // require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
+
+              dut.io.dMemAck.valid.poke(true.B)
+              dut.io.dMemAck.bits.value.poke(((BigInt(readValue >>> 1) << 1) + (readValue & 1)).U)
+              dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
+              dut.io.dMemAck.ready.expect(true.B)
+            } else if (dut.io.dMem.valid.peek().litToBoolean) {
+              dut.io.dMem.ready.poke(true.B)
+
+              val addr = dut.io.dMem.bits.addr.peek().litValue.toInt
+              val size = 1 << dut.io.dMem.bits.size.peek().litValue.intValue
+              val write = dut.io.dMem.bits.write.valid.peek().litToBoolean
+
+              println(s"addr: $addr size: $size write: $write")
+
+              if (write) {
+                var writeVal = dut.io.dMem.bits.write.bits.value.peek().litValue.toLong
+                var writeMask = dut.io.dMem.bits.write.bits.mask.peek().litValue.toInt
+
+                println(s"Main: writing: ${writeVal.toHexString} / ${java.lang.Long.reverse(writeVal).toHexString}, mask: ${writeMask.toBinaryString}")
+
+                for (rOff <- 0 until size) {
+                  val off = size - rOff - 1
+
+                  if (0 != (writeMask & 1)) {
+                    memory(addr + off) = (writeVal & 0xFF).toByte
+                  }
+
+                  writeVal = writeVal >>> 8
+                  writeMask = writeMask >>> 1
+                }
+
+                ackSize = size
+              } else {
+                ackSize = size
+                readValue = 0
+
+                if (addr + size <= memSize) {
+                  for (off <- 0 until size) {
+                    var memValue = memory(addr + off).toInt
+
+                    memValue = (memValue << 24) >>> 24
+
+                    readValue = readValue << 8
+                    readValue = readValue | memValue
+                  }
+                }
+
+                println(s"Main: reading: ${readValue.toHexString}")
+              }
+
+              ackValid = true
+              dut.io.dMemAck.valid.poke(false.B)
+            } else {
+              dut.io.dMemAck.valid.poke(false.B)
+            }
+
+            dut.clock.step()
+          }
+        }
+
+        Thread.sleep(1000)
+        printMem(memory, 8, toRevLongHex)
+      }
+      println("Main: CUM SUM Testing Finish")
+
+      return
+
+      println("Main: Q SORT Testing Start")
       test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
         val instructions = Seq(
           // set return address to out of bounds
@@ -1529,11 +1980,11 @@ object Main {
           memory(i) = 0.toByte
         }
 
-        println(memory.mkString("memory: (", ", ", ")"))
+        printMem(memory, 8, toRevLongHex)
 
         var ackValid = false
         var ackSize = 0
-        var readValue = 0
+        var readValue = 0L
 
         breakable {
           while(true) {
@@ -1544,7 +1995,7 @@ object Main {
 
             println(s"Fetching instIdx: $instIdx")
 
-            if (instIdx == 1024) {
+            if (instIdx == 256) {
               println("program returned")
               break
             } else if (instIdx < instructions.length) {
@@ -1558,11 +2009,11 @@ object Main {
             if (ackValid) {
               ackValid = false
 
-//              require(dut.io.dMem.valid.peek().litToBoolean)
-//              require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
+              // require(dut.io.dMem.valid.peek().litToBoolean)
+              // require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
 
               dut.io.dMemAck.valid.poke(true.B)
-              dut.io.dMemAck.bits.value.poke(true.B)
+              dut.io.dMemAck.bits.value.poke(((BigInt(readValue >>> 1) << 1) + (readValue & 1)).U)
               dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
               dut.io.dMemAck.ready.expect(true.B)
             } else if (dut.io.dMem.valid.peek().litToBoolean) {
@@ -1578,7 +2029,11 @@ object Main {
                 var writeVal = dut.io.dMem.bits.write.bits.value.peek().litValue.toLong
                 var writeMask = dut.io.dMem.bits.write.bits.mask.peek().litValue.toInt
 
-                for (off <- 0 until size) {
+                println(s"Main: writing: ${writeVal.toHexString}, mask: ${writeMask.toBinaryString}")
+
+                for (rOff <- 0 until size) {
+                  val off = size - rOff - 1
+
                   if (0 != (writeMask & 1)) {
                     memory(addr + off) = (writeVal & 0xFF).toByte
                   }
@@ -1592,7 +2047,7 @@ object Main {
                 ackSize = size
                 readValue = 0
 
-                if (addr + size < memSize) {
+                if (addr + size <= memSize) {
                   for (off <- 0 until size) {
                     var memValue = memory(addr + off).toInt
 
@@ -1602,6 +2057,8 @@ object Main {
                     readValue = readValue | memValue
                   }
                 }
+
+                println(s"Main: reading: ${readValue.toHexString}")
               }
 
               ackValid = true
@@ -1613,7 +2070,10 @@ object Main {
             dut.clock.step()
           }
         }
+
+        printMem(memory, 8, toRevLongHex)
       }
+      println("Main: Q SORT Testing Finish")
     }
 
     println("Compiling")

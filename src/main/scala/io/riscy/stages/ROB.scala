@@ -73,7 +73,40 @@ class ROB()(implicit val params: Parameters) extends Module {
     val data = new ROBSignals()
   }))
 
-  val canAllocate = robHead =/= (robTail + 1.U)
+  val canAllocate = robHead =/= (robTail + 2.U)
+
+  val robTailIn1 = Wire(UInt(log2Ceil(nROBEntries).W))
+  val robTailIn2 = Wire(UInt(log2Ceil(nROBEntries).W))
+
+  robTailIn1 := robTail
+
+  when(io.flush.valid) {
+    printf(cf"ROB: flushing: ${io.flush.bits}\n")
+
+    when(!entries(io.flush.bits.robIdx).valid) {
+      assert(robTail === io.flush.bits.robIdx, "Cannot flush invalid and non-tail entry")
+
+      // allocate the rob
+      robTailIn1 := robTail + 1.U
+
+      entries(io.flush.bits.robIdx).valid := true.B
+      entries(io.flush.bits.robIdx).bits.committed := true.B
+    }
+
+    // NOTE: This operation will overwrite the program counter of the flushed instruction
+    //       to the update program counter. And, the processor when looks at the retired
+    //       instruction and find that it needs to be flushed, it will restart execution
+    //       from the program counter of that instruction which will be the updated PC
+    //       in this case.
+
+    entries(io.flush.bits.robIdx).bits.flush := true.B
+
+    when(io.flush.bits.updatePc.valid) {
+      entries(io.flush.bits.robIdx).bits.pc := io.flush.bits.updatePc.bits
+    }
+  }
+
+  robTailIn2 := robTailIn1
 
   when(io.allocate && canAllocate) {
     printf(cf"ROB: Allocating: head: $robHead, tail: $robTail\n")
@@ -83,13 +116,15 @@ class ROB()(implicit val params: Parameters) extends Module {
 
     entries(robTail).valid := false.B
 
-    robTail := robTail + 1.U
+    robTailIn2 := robTailIn1 + 1.U
   }.otherwise {
     printf(cf"ROB: Didn't allocate: head: $robHead, tail: $robTail, allocate: ${io.allocate}\n")
 
     io.allocatedIdx.valid := false.B
     io.allocatedIdx.bits := DontCare
   }
+
+  robTail := robTailIn2
 
   when(io.instSignals.valid) {
     printf(cf"ROB: Storing instSignals: ${io.instSignals}\n")
@@ -161,24 +196,6 @@ class ROB()(implicit val params: Parameters) extends Module {
   }.otherwise {
     io.retireInst.valid := false.B
     io.retireInst.bits := DontCare
-  }
-
-  when(io.flush.valid) {
-    printf(cf"ROB: flushing: ${io.flush.bits}\n")
-
-    assert(entries(io.flush.bits.robIdx).valid, "Flushing entry invalid")
-
-    // NOTE: This operation will overwrite the program counter of the flushed instruction
-    //       to the update program counter. And, the processor when looks at the retired
-    //       instruction and find that it needs to be flushed, it will restart execution
-    //       from the program counter of that instruction which will be the updated PC
-    //       in this case.
-
-    entries(io.flush.bits.robIdx).bits.flush := true.B
-
-    when(io.flush.bits.updatePc.valid) {
-      entries(io.flush.bits.robIdx).bits.pc := io.flush.bits.updatePc.bits
-    }
   }
 
   when(io.predictionRobIdx.valid) {

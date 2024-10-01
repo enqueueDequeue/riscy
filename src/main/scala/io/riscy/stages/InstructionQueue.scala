@@ -2,7 +2,6 @@ package io.riscy.stages
 
 import chisel3.util.{PriorityMux, Valid, isPow2, log2Ceil}
 import chisel3.{Bool, Bundle, DontCare, Input, Mem, Module, Mux, Output, PrintableHelper, RegInit, UInt, Vec, VecInit, Wire, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.stages.InstructionQueue.{getMapIdx, getMapIdxH}
 import io.riscy.stages.signals.Parameters
 
 class InstructionQueue()(implicit val params: Parameters) extends Module {
@@ -51,7 +50,8 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
   //       and make the register read the same cycle as of IQ
   // width = nEntries
   // height = nPhyRegs
-  val map = RegInit(VecInit(Seq.fill(nPhyRegs * nEntries)(false.B)))
+  val map = RegInit(VecInit(Seq.fill(nEntries) { 0.U(nPhyRegs.W) }))
+  // val map = RegInit(VecInit(Seq.fill(nPhyRegs * nEntries)(false.B)))
   val readyInsts = Wire(Vec(nEntries, Bool()))
 
   // last mux value reserved for invalid
@@ -96,13 +96,11 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
 
   // wake up instructions whose registers are ready
   for (e <- 0 until nEntries) {
-    val deps = VecInit(Seq.tabulate(nPhyRegs) { reg => map(getMapIdx(reg, e, nEntriesLog)) })
+    val deps = VecInit(Seq.tabulate(nPhyRegs) { reg => Mux(io.wakeUpRegs(reg), 0.U, map(e)(reg)) })
     val depPending = deps.reduceTree(_ | _)
 
     readyInsts(e) := !depPending & occupancies(e) & allocations(e)
   }
-
-  val nextMapMask = Wire(UInt((nPhyRegs * nEntries).W))
 
   val nextAllocationsIntermediate = Wire(UInt(nEntries.W))
   val nextAllocations = Wire(UInt(nEntries.W))
@@ -145,33 +143,25 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
     stations(stationIdx) := io.instSignals.bits.robIdx
 
     // only depend if the register needs to be ready actually
-    val rs1Mask = Wire(UInt((nPhyRegs * nEntries).W))
-    val rs2Mask = Wire(UInt((nPhyRegs * nEntries).W))
+    val mask = Wire(Vec(nPhyRegs, Bool()))
+
+    for (r <- 0 until nPhyRegs) {
+      mask(r) := false.B
+    }
 
     when(io.instSignals.bits.rs1PhyReg.valid) {
-      rs1Mask := 1.U << getMapIdxH(io.instSignals.bits.rs1PhyReg.bits, stationIdx, nEntriesLog)
-    }.otherwise {
-      rs1Mask := 0.U
+      mask(io.instSignals.bits.rs1PhyReg.bits) := true.B
     }
 
     when(io.instSignals.bits.rs2PhyReg.valid) {
-      rs2Mask := 1.U << getMapIdxH(io.instSignals.bits.rs2PhyReg.bits, stationIdx, nEntriesLog)
-    }.otherwise {
-      rs2Mask := 0.U
+      mask(io.instSignals.bits.rs2PhyReg.bits) := true.B
     }
 
-    nextMapMask := rs1Mask | rs2Mask
+    map(stationIdx) := mask.asUInt
+
     nextOccupancies := nextOccupanciesIntermediate | (1.U << stationIdx).asUInt
   }.otherwise {
-    nextMapMask := 0.U
     nextOccupancies := nextOccupanciesIntermediate
-  }
-
-  for (r <- 0 until nPhyRegs) {
-    for (e <- 0 until nEntries) {
-      val idx = getMapIdx(r, e, nEntriesLog)
-      map(idx) := Mux(io.wakeUpRegs(r), 0.U, map(idx) | nextMapMask(idx))
-    }
   }
 
   allocations := nextAllocations
@@ -182,6 +172,16 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
     occupancies := 0.U
   }
 
+  /*
+  for (idx <- 0 until nEntries) {
+    printf(cf"entry($idx): ")
+    for (r <- 0 until nPhyRegs) {
+      printf(cf"${map(getMapIdx(r, idx, nEntriesLog))}")
+    }
+    printf("\n")
+  }
+  */
+
   printf(cf"IQ: allocations: |$allocations%b|\n")
   printf(cf"IQ: occupancies: |$occupancies%b|\n")
   printf(cf"IQ: wakeupRegs: ${io.wakeUpRegs}%b\n")
@@ -190,14 +190,4 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
 
   io.readyInstSignals.valid := readyInstIdx.valid
   io.readyInstSignals.bits := Mux(readyInstIdx.valid, stations(readyInstIdx.bits), DontCare)
-}
-
-object InstructionQueue {
-  def getMapIdx(regIdx: Int, instIdx: Int, nEntriesLog: Int): Int = {
-    (regIdx << nEntriesLog) + instIdx
-  }
-
-  def getMapIdxH(regIdx: UInt, instIdx: UInt, nEntriesLog: Int): UInt = {
-    instIdx + (regIdx << nEntriesLog)
-  }
 }

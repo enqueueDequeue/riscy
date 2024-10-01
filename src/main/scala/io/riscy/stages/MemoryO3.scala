@@ -166,24 +166,6 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     }
   })
 
-  val stFireIdx = PriorityMux(Seq.tabulate(nStQEntries + 1) { idx =>
-    val idxW = Wire(Valid(UInt(log2Ceil(nStQEntries).W)))
-
-    if (idx < nStQEntries) {
-      val stEntry = storeQueue(idx)
-
-      idxW.valid := true.B
-      idxW.bits := idx.U
-
-      (stEntry.reserved && stEntry.retired && !stEntry.fired, idxW)
-    } else {
-      idxW.valid := false.B
-      idxW.bits := DontCare
-
-      (true.B, idxW)
-    }
-  })
-
   io.allocatedIdx.valid := false.B
   io.allocatedIdx.bits := DontCare
 
@@ -323,7 +305,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
           flushIdxW.valid := valid
           flushIdxW.bits := robIdx
 
-          printf(cf"Memory: ldIdx: $ldIdx, valid: $valid robIdx: $robIdx\n")
+          // printf(cf"Memory: ldIdx: $ldIdx, valid: $valid robIdx: $robIdx\n")
 
           (valid, flushIdxW)
         } else {
@@ -343,6 +325,11 @@ class MemoryO3()(implicit params: Parameters) extends Module {
   // Always prioritizing stores over loads
   // This might starve the loads, but, as the stores
   // are only issued in the program order, this makes sense
+  val stFireIdx = Wire(Valid(UInt(log2Ceil(nStQEntries).W)))
+  val stHead = storeQueue(storeQueueHead)
+
+  stFireIdx.valid := stHead.reserved && stHead.retired && !stHead.fired
+  stFireIdx.bits := storeQueueHead
 
   when(stFireIdx.valid && !requestInProgress.valid) {
     val stEntry = storeQueue(stFireIdx.bits)
@@ -423,6 +410,8 @@ class MemoryO3()(implicit params: Parameters) extends Module {
       val storeQueueLen = storeQueueTail - storeQueueHead
       val ldIdx = requestInProgress.bits.idx.asLoadIndex()
 
+      printf(cf"Memory: loaded: ${ackData.value}\n")
+
       val value = Wire(Vec(dataWidth, Bool()))
 
       // Reversing from main memory here
@@ -484,6 +473,15 @@ class MemoryO3()(implicit params: Parameters) extends Module {
   }
 
   when(readOutIdx.valid) {
+    val ldIdx = readOutIdx.bits
+    val data = loadQueue(ldIdx).data.bits
+    val addr = loadQueue(ldIdx).address.bits
+    val size = loadQueue(ldIdx).size
+
+    val readValue = readData(data, addr, size, dataBytes, bitWidth)
+
+    printf(cf"Memory: read ldIdx: $ldIdx @ $addr($size) = 0x$readValue%x\n")
+
     readOutIdx.valid := false.B
 
     assert(loadQueue(readOutIdx.bits).data.valid)
@@ -494,10 +492,7 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 
     io.readDataOut.bits.robIdx := loadQueue(readOutIdx.bits).robIdx.bits
 
-    io.readDataOut.bits.data := readData(loadQueue(readOutIdx.bits).data.bits,
-                                          loadQueue(readOutIdx.bits).address.bits,
-                                          loadQueue(readOutIdx.bits).size,
-                                          dataBytes, bitWidth)
+    io.readDataOut.bits.data := readValue
   }.otherwise {
     io.readDataOut.valid := false.B
     io.readDataOut.bits := DontCare

@@ -333,8 +333,12 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   iq.io.instSignals.valid := renameRobIqSignals.valid
   iq.io.instSignals.bits.iqIdx := renameRobIqSignals.bits.stage.alloc.iqIdx
   iq.io.instSignals.bits.robIdx := renameRobIqSignals.bits.stage.alloc.robIdx
+
+  // Stores are the only kinds of instructions which both specify rs2Imm and still use rs2
+  // This logic could be useful to breakup the loads and stores into 2 uops 1 address generation and 1 memory
   iq.io.instSignals.bits.rs1PhyReg.valid := !(renameRobIqSignals.bits.stage.decode.rs1Pc || renameRobIqSignals.bits.stage.decode.rs1 === 0.U)
-  iq.io.instSignals.bits.rs2PhyReg.valid := !(renameRobIqSignals.bits.stage.decode.rs2Imm || renameRobIqSignals.bits.stage.decode.rs2 === 0.U)
+  iq.io.instSignals.bits.rs2PhyReg.valid := isValid(renameRobIqSignals.bits.stage.decode.memWrite) || !(renameRobIqSignals.bits.stage.decode.rs2Imm || renameRobIqSignals.bits.stage.decode.rs2 === 0.U)
+
   iq.io.instSignals.bits.rs1PhyReg.bits := renameRobIqSignals.bits.stage.rename.rs1PhyReg
   iq.io.instSignals.bits.rs2PhyReg.bits := renameRobIqSignals.bits.stage.rename.rs2PhyReg
 
@@ -387,7 +391,7 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
     val robIdx = UInt(log2Ceil(nROBEntries).W)
   }))
 
-  when(rrExMemSignals.valid
+  when(!flush && rrExMemSignals.valid
        && !isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memRead)
        && !isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memWrite)) {
 
@@ -496,14 +500,26 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
 
   val address = rrExMemSignals.bits.stage.regRead.rs1Value + rrExMemSignals.bits.stage.rob.decodeSignals.immediate
 
-  memory.io.readData.valid := rrExMemSignals.valid && isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memRead)
+  memory.io.readData.valid := !flush && rrExMemSignals.valid && isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memRead)
   memory.io.readData.bits.address := address
   memory.io.readData.bits.size := rrExMemSignals.bits.stage.rob.decodeSignals.memRead
   memory.io.readData.bits.robIdx := rrExMemSignals.bits.stage.rob.allocSignals.robIdx
   memory.io.readData.bits.dstReg := rrExMemSignals.bits.stage.rob.allocSignals.dstReg
   memory.io.readData.bits.ldIdx := rrExMemSignals.bits.stage.rob.allocSignals.memIdx.bits.asLoadIndex()
 
-  memory.io.writeData.valid := rrExMemSignals.valid && isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memWrite)
+  // currently only throwing exceptions from memory
+  // actually, there can be exceptions from anywhere
+  // Like:
+  // divide by zero in ALU
+  // OR
+  // accessing a page that is not supposed to be
+  // So, technically, the actual logic should be just like
+  // the logic of flush. The first exception (closest to the rob head)
+  // is the only one that needs to be propagated anyway.
+  rob.io.exception.valid := memory.io.readException.valid
+  rob.io.exception.bits.robIdx := memory.io.readException.bits
+
+  memory.io.writeData.valid := !flush && rrExMemSignals.valid && isValid(rrExMemSignals.bits.stage.rob.decodeSignals.memWrite)
   memory.io.writeData.bits.address := address
   memory.io.writeData.bits.size := rrExMemSignals.bits.stage.rob.decodeSignals.memWrite
   memory.io.writeData.bits.data := rrExMemSignals.bits.stage.regRead.rs2Value

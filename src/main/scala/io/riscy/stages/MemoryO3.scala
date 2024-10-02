@@ -2,7 +2,7 @@ package io.riscy.stages
 
 import chisel3.util.{Cat, Decoupled, MuxLookup, PriorityMux, Reverse, Valid, isPow2, log2Ceil}
 import chisel3.{Bool, Bundle, DontCare, Flipped, Input, Module, Mux, Output, PrintableHelper, Reg, RegInit, UInt, Vec, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.stages.MemoryO3.{align, mask, readData, resize, writeData}
+import io.riscy.stages.MemoryO3.{align, isValid, mask, readData, resize, writeData}
 import io.riscy.stages.signals.Parameters
 
 // Contains data in the natural ordering for the hardware
@@ -76,6 +76,8 @@ class MemoryO3()(implicit params: Parameters) extends Module {
       val address = UInt(addrWidth.W)
       val size = Input(MemRWSize())
     }))
+
+    val readException = Output(Valid(UInt(log2Ceil(nROBEntries).W)))
 
     val writeData = Input(Valid(new Bundle {
       val stIdx = UInt(log2Ceil(nStQEntries).W)
@@ -172,6 +174,9 @@ class MemoryO3()(implicit params: Parameters) extends Module {
   io.flushIdx.valid := false.B
   io.flushIdx.bits := DontCare
 
+  io.readException.valid := false.B
+  io.readException.bits := DontCare
+
   when(io.flush) {
     loadQueueHead := 0.U
     loadQueueTail := 0.U
@@ -226,14 +231,19 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 
     printf(cf"Memory: ldIdx: $ldIdx size: $size address: $address dstReg: $dstReg robIdx: $robIdx\n")
 
-    loadQueue(ldIdx).size := size
-    loadQueue(ldIdx).address.valid := true.B
-    loadQueue(ldIdx).address.bits := address
-    loadQueue(ldIdx).dstReg := dstReg
-    loadQueue(ldIdx).robIdx.valid := true.B
-    loadQueue(ldIdx).robIdx.bits := robIdx
-    loadQueue(ldIdx).mask.valid := true.B
-    loadQueue(ldIdx).mask.bits := mask(address, size, dataBytes)
+    when(isValid(address, size, dataBytes)) {
+      loadQueue(ldIdx).size := size
+      loadQueue(ldIdx).address.valid := true.B
+      loadQueue(ldIdx).address.bits := address
+      loadQueue(ldIdx).dstReg := dstReg
+      loadQueue(ldIdx).robIdx.valid := true.B
+      loadQueue(ldIdx).robIdx.bits := robIdx
+      loadQueue(ldIdx).mask.valid := true.B
+      loadQueue(ldIdx).mask.bits := mask(address, size, dataBytes)
+    }.otherwise {
+      io.readException.valid := true.B
+      io.readException.bits := robIdx
+    }
   }
 
   when(io.writeData.valid) {
@@ -500,6 +510,13 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 }
 
 object MemoryO3 {
+  def isValid(addr: UInt, rwSize: MemRWSize.Type, dataBytes: Int): Bool = {
+    val size = Memory.getSizeBytes(rwSize)
+    val off = offset(addr, dataBytes)
+
+    off +& size <= dataBytes.U
+  }
+
   def align(addr: UInt, dataBytes: Int): UInt = {
     require(isPow2(dataBytes))
 

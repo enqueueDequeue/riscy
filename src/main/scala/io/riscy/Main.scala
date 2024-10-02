@@ -1,7 +1,7 @@
 package io.riscy
 
 import chisel3.util.log2Ceil
-import chisel3.{Bundle, DontCare, IO, Input, Module, Output, UInt, fromBigIntToLiteral, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, fromLongToLiteral, fromStringToLiteral}
+import chisel3.{Bundle, Input, Module, Output, UInt, fromBigIntToLiteral, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, fromLongToLiteral, fromStringToLiteral}
 import chiseltest.RawTester.test
 import chiseltest.simulator.WriteVcdAnnotation
 import chiseltest.{VerilatorBackendAnnotation, testableBool, testableClock, testableData}
@@ -15,7 +15,11 @@ import scala.util.control.Breaks.{break, breakable}
 
 object Main {
 
-  def toInt(memory: Array[Byte]): String = {
+  def formatHex(value: Long): String = {
+    value.toHexString
+  }
+
+  def toInt(memory: Array[Byte]): Long = {
     var memValue: Int = 0
 
     require(memory.length == 4)
@@ -30,10 +34,10 @@ object Main {
       memValue = memValue | value
     }
 
-    memValue.toString
+    memValue
   }
 
-  def toLong(memory: Array[Byte]): String = {
+  def toLong(memory: Array[Byte]): Long = {
     var memValue: Long = 0
 
     require(memory.length == 8)
@@ -48,10 +52,10 @@ object Main {
       memValue = memValue | value
     }
 
-    memValue.toString
+    memValue
   }
 
-  def toRevLongHex(memory: Array[Byte]): String = {
+  def toRevLong(memory: Array[Byte]): Long = {
     var memValue: Long = 0
 
     require(memory.length == 8)
@@ -66,10 +70,10 @@ object Main {
       memValue = memValue | value
     }
 
-    java.lang.Long.reverse(memValue).toHexString
+    java.lang.Long.reverse(memValue)
   }
 
-  def printMem(memory: Array[Byte], wordLen: Int = 4, wordGen: Array[Byte] => String = toInt): Unit = {
+  def printMem(memory: Array[Byte], wordLen: Int = 4, wordGen: Array[Byte] => Long = toInt, formatter: Long => String = formatHex): Unit = {
     val factor = 256
 
     println("Main: memory: ")
@@ -77,13 +81,123 @@ object Main {
     for (idxX <- memory.indices by factor) {
       for (idxY <- 0 until factor by wordLen) {
         val idx = idxX + idxY
-        val memValue = wordGen(memory.slice(idx, idx + wordLen))
+        val memValue = formatter(wordGen(memory.slice(idx, idx + wordLen)))
 
         print(s"$memValue,")
       }
       println("")
     }
     println("")
+  }
+
+  def testO3(dut: OutOfOrderCPU, instructions: Seq[Long], memory: Array[Byte], endInstIdx: Int, targetCountDown: Int = 100): Unit = {
+    val memSize = memory.length
+
+    var ackValid = false
+    var ackSize = 0
+    var readValue = 0L
+
+    var completed = false
+    var countDown = 0
+
+    breakable {
+      while(true) {
+        if (completed) {
+          if (0 == countDown) {
+            println("program returned")
+            break
+          }
+
+          countDown -= 1
+        }
+
+        dut.io.iReadAddr.valid.expect(true.B)
+        dut.io.iReadAddr.ready.poke(true.B)
+
+        val instIdx = dut.io.iReadAddr.bits.peek().litValue.intValue / 4
+
+        println(s"Fetching instIdx: $instIdx")
+
+        if (instIdx == endInstIdx) {
+          dut.io.iReadValue.valid.poke(false.B)
+
+          if (!completed) {
+            // wait for the retires to complete
+            completed = true
+            countDown = targetCountDown
+          }
+        } else if (instIdx < instructions.length) {
+          dut.io.iReadValue.valid.poke(true.B)
+          dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
+          dut.io.iReadValue.ready.expect(true.B)
+        } else {
+          dut.io.iReadValue.valid.poke(false.B)
+        }
+
+        if (ackValid) {
+          ackValid = false
+
+          // require(dut.io.dMem.valid.peek().litToBoolean)
+          // require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
+
+          dut.io.dMemAck.valid.poke(true.B)
+          dut.io.dMemAck.bits.value.poke(((BigInt(readValue >>> 1) << 1) + (readValue & 1)).U)
+          dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
+          dut.io.dMemAck.ready.expect(true.B)
+        } else if (dut.io.dMem.valid.peek().litToBoolean) {
+          dut.io.dMem.ready.poke(true.B)
+
+          val addr = dut.io.dMem.bits.addr.peek().litValue.toInt
+          val size = 1 << dut.io.dMem.bits.size.peek().litValue.intValue
+          val write = dut.io.dMem.bits.write.valid.peek().litToBoolean
+
+          println(s"addr: $addr size: $size write: $write")
+
+          if (write) {
+            var writeVal = dut.io.dMem.bits.write.bits.value.peek().litValue.toLong
+            var writeMask = dut.io.dMem.bits.write.bits.mask.peek().litValue.toInt
+
+            println(s"Main: writing: ${writeVal.toHexString} / ${java.lang.Long.reverse(writeVal).toHexString}, mask: ${writeMask.toBinaryString}")
+
+            for (rOff <- 0 until size) {
+              val off = size - rOff - 1
+
+              if (0 != (writeMask & 1)) {
+                memory(addr + off) = (writeVal & 0xFF).toByte
+              }
+
+              writeVal = writeVal >>> 8
+              writeMask = writeMask >>> 1
+            }
+
+            ackSize = size
+          } else {
+            ackSize = size
+            readValue = 0
+
+            if (addr + size <= memSize) {
+              for (off <- 0 until size) {
+                var memValue = memory(addr + off).toInt
+
+                memValue = (memValue << 24) >>> 24
+
+                readValue = readValue << 8
+                readValue = readValue | memValue
+              }
+            }
+
+            println(s"Main: reading: ${readValue.toHexString}")
+          }
+
+          ackValid = true
+          dut.io.dMemAck.valid.poke(false.B)
+        } else {
+          dut.io.dMemAck.valid.poke(false.B)
+        }
+
+        dut.clock.step()
+      }
+    }
   }
 
   def getParams(nArchRegs: Int = 32,
@@ -102,7 +216,6 @@ object Main {
 
   def main(args: Array[String]): Unit = {
 
-    /*
     {
       implicit val params = getParams()
 
@@ -870,11 +983,6 @@ object Main {
         dut.clock.step()
 
         dut.io.wakeUpRegs.poke(0b1010.U)
-        dut.io.readyInstSignals.valid.expect(false.B)
-        dut.clock.step()
-
-        dut.io.wakeUpRegs.poke(0x0.U)
-
         dut.io.readyInstSignals.valid.expect(true.B)
         dut.io.readyInstSignals.bits.expect(1.U)
         dut.clock.step()
@@ -888,37 +996,55 @@ object Main {
 
         dut.io.wakeUpRegs.poke(0x0.U)
 
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(0.U)
+        dut.clock.step()
+
         // inst 0
         dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.iqIdx.poke(0.U)
         dut.io.instSignals.bits.robIdx.poke(0.U)
         dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
         dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs2PhyReg.bits.poke(7.U)
-        dut.io.iqIdx.valid.expect(true.B)
+
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(1.U)
         dut.clock.step()
 
         // inst 1
         dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.iqIdx.poke(1.U)
         dut.io.instSignals.bits.robIdx.poke(1.U)
         dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs1PhyReg.bits.poke(2.U)
         dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs2PhyReg.bits.poke(4.U)
-        dut.io.iqIdx.valid.expect(true.B)
+
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(2.U)
         dut.clock.step()
 
         // inst 2
         dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.iqIdx.poke(2.U)
         dut.io.instSignals.bits.robIdx.poke(2.U)
         dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs1PhyReg.bits.poke(5.U)
         dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs2PhyReg.bits.poke(6.U)
-        dut.io.iqIdx.valid.expect(true.B)
+
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(3.U)
         dut.clock.step()
 
         // waking up register 1
+        dut.io.allocate.poke(false.B)
         dut.io.wakeUpRegs.poke(0b0000010.U)
         dut.io.instSignals.valid.poke(false.B)
         dut.io.readyInstSignals.valid.expect(false.B)
@@ -926,32 +1052,30 @@ object Main {
 
         // waking up register 2 & 4
         dut.io.wakeUpRegs.poke(0b0010100.U)
-        dut.io.readyInstSignals.valid.expect(false.B)
-        dut.clock.step()
-
-        // inst 1 should've been woken up
-        dut.io.wakeUpRegs.poke(0.U)
         dut.io.readyInstSignals.valid.expect(true.B)
         dut.io.readyInstSignals.bits.expect(1.U)
         dut.clock.step()
 
+        dut.io.wakeUpRegs.poke(0.U)
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(1.U)
+        dut.clock.step()
+
         // inst 3
+        dut.io.allocate.poke(false.B)
         dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.iqIdx.poke(1.U)
         dut.io.instSignals.bits.robIdx.poke(3.U)
         dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs1PhyReg.bits.poke(3.U)
         dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
         dut.io.instSignals.bits.rs2PhyReg.bits.poke(6.U)
-        dut.io.iqIdx.valid.expect(true.B)
         dut.clock.step()
 
         // waking up register 3, 5 & 6
         dut.io.instSignals.valid.poke(false.B)
         dut.io.wakeUpRegs.poke(0b1101000.U)
-        dut.io.readyInstSignals.valid.expect(false.B)
-        dut.clock.step()
-
-        // inst 3 should've been woken up
         dut.io.readyInstSignals.valid.expect(true.B)
         dut.io.readyInstSignals.bits.expect(3.U)
         dut.clock.step()
@@ -961,185 +1085,73 @@ object Main {
         dut.io.readyInstSignals.bits.expect(2.U)
         dut.clock.step()
 
-        // wake up register 7 and then inst 0 should be ready
+        // wake up register 7
         dut.io.wakeUpRegs.poke(0b10000000.U)
         dut.io.readyInstSignals.valid.expect(false.B)
         dut.clock.step()
 
+        // wake up register 7 & 1, now 0 should be ready
+        dut.io.wakeUpRegs.poke(0b10000010.U)
         dut.io.readyInstSignals.valid.expect(true.B)
         dut.io.readyInstSignals.bits.expect(0.U)
-        dut.clock.step()
-
-        dut.clock.step()
-      }
-
-      test(new InstructionQueue()) { dut =>
-        println("---------------------------------------------")
-
-        dut.io.wakeUpRegs.poke(0x0.U)
-
-        // inst 0
-        dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.robIdx.poke(0.U)
-        // phy reg 1 -> 1
-        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
-        dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
-        // phy reg 2 -> no deps
-        dut.io.instSignals.bits.rs2PhyReg.valid.poke(false.B)
-        dut.io.instSignals.bits.rs2PhyReg.bits.poke(0.U)
-        // check the allocation
-        dut.io.iqIdx.valid.expect(true.B)
-        // check the ready instructions
-        dut.io.readyInstSignals.valid.expect(false.B)
-        dut.clock.step()
-
-        // inst 1
-        dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.robIdx.poke(1.U)
-        // phy reg 1 -> no dep
-        dut.io.instSignals.bits.rs1PhyReg.valid.poke(false.B)
-        dut.io.instSignals.bits.rs1PhyReg.bits.poke(0.U)
-        // phy reg 2 -> no dep
-        dut.io.instSignals.bits.rs2PhyReg.valid.poke(false.B)
-        dut.io.instSignals.bits.rs2PhyReg.bits.poke(4.U)
-        // check the allocation
-        dut.io.iqIdx.valid.expect(true.B)
-        // check the ready instructions
-        dut.io.readyInstSignals.valid.expect(false.B)
-        dut.clock.step()
-
-        // inst 2
-        dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.robIdx.poke(2.U)
-        // phy reg 1 -> 5
-        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
-        dut.io.instSignals.bits.rs1PhyReg.bits.poke(5.U)
-        // phy reg 2 -> 6
-        dut.io.instSignals.bits.rs2PhyReg.valid.poke(true.B)
-        dut.io.instSignals.bits.rs2PhyReg.bits.poke(6.U)
-        // check the allocation
-        dut.io.iqIdx.valid.expect(true.B)
-
-        // check the ready instructions
-        dut.io.readyInstSignals.valid.expect(true.B)
-        dut.io.readyInstSignals.bits.expect(1.U)
-        dut.clock.step()
-
-        // inst 3, same as inst 0
-        dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.robIdx.poke(3.U)
-        // phy reg 1 -> 1
-        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
-        dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
-        // phy reg 2 -> no deps
-        dut.io.instSignals.bits.rs2PhyReg.valid.poke(false.B)
-        dut.io.instSignals.bits.rs2PhyReg.bits.poke(0.U)
-        // check the allocation
-        dut.io.iqIdx.valid.expect(true.B)
-        // check the ready instructions
-        dut.io.readyInstSignals.valid.expect(false.B)
-        dut.clock.step()
-
-        // inst 4, same as inst 0
-        dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.robIdx.poke(4.U)
-        // phy reg 1 -> 1
-        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
-        dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
-        // phy reg 2 -> no deps
-        dut.io.instSignals.bits.rs2PhyReg.valid.poke(false.B)
-        dut.io.instSignals.bits.rs2PhyReg.bits.poke(0.U)
-        // check the allocation
-        dut.io.iqIdx.valid.expect(true.B)
-        // check the ready instructions
-        dut.io.readyInstSignals.valid.expect(false.B)
-        dut.clock.step()
-
-        // inst 5, same as inst 0, shouldn't allocate, IQ should be full
-        dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.robIdx.poke(5.U)
-        // phy reg 1 -> 1
-        dut.io.instSignals.bits.rs1PhyReg.valid.poke(true.B)
-        dut.io.instSignals.bits.rs1PhyReg.bits.poke(1.U)
-        // phy reg 2 -> no deps
-        dut.io.instSignals.bits.rs2PhyReg.valid.poke(false.B)
-        dut.io.instSignals.bits.rs2PhyReg.bits.poke(0.U)
-        // check the allocation
-        dut.io.iqIdx.valid.expect(false.B)
-        // check the ready instructions
-        dut.io.readyInstSignals.valid.expect(false.B)
-        dut.clock.step()
-
-        dut.io.wakeUpRegs.poke(0b0000_0010.U)
-        dut.io.instSignals.valid.poke(false.B)
-        dut.clock.step()
-
-        dut.io.wakeUpRegs.poke(0.U)
-        dut.io.readyInstSignals.valid.expect(true.B)
-        dut.io.readyInstSignals.bits.expect(0.U)
-        dut.clock.step()
-
-        dut.io.wakeUpRegs.poke(0b0110_0000.U)
-        dut.io.readyInstSignals.valid.expect(true.B)
-        dut.io.readyInstSignals.bits.expect(3.U)
-        dut.clock.step()
-
-        dut.io.wakeUpRegs.poke(0.U)
-        dut.io.readyInstSignals.valid.expect(true.B)
-        dut.io.readyInstSignals.bits.expect(2.U)
-        dut.clock.step()
-
-        dut.io.readyInstSignals.valid.expect(true.B)
-        dut.io.readyInstSignals.bits.expect(4.U)
-        dut.clock.step()
-
         dut.clock.step()
       }
     }
 
     {
-      implicit val params = getParams(nROBEntries = 4)
+      implicit val params = getParams(nROBEntries = 8)
 
       test(new ROB()) { dut =>
         dut.io.allocate.poke(true.B)
         dut.io.allocatedIdx.valid.expect(true.B)
         dut.io.allocatedIdx.bits.expect(0.U)
+        dut.clock.step()
 
         // inst 1
         dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.data.robIdx.poke(0.U)
         dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
         dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x01.U)
-        dut.io.robIdx.valid.expect(true.B)
-        dut.io.robIdx.bits.expect(0.U)
+
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(1.U)
         dut.clock.step()
 
         // inst 2
         dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.data.robIdx.poke(1.U)
         dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
         dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x02.U)
-        dut.io.robIdx.valid.expect(true.B)
-        dut.io.robIdx.bits.expect(1.U)
+
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(2.U)
         dut.clock.step()
 
         // inst 3
+        dut.io.allocate.poke(false.B)
         dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.data.robIdx.poke(2.U)
         dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
         dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x03.U)
-        dut.io.robIdx.valid.expect(true.B)
-        dut.io.robIdx.bits.expect(2.U)
         dut.clock.step()
 
-        // inst 4 - won't fit in, addressing limitations
-        dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
-        dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x04.U)
-        dut.io.robIdx.valid.expect(false.B)
+        dut.io.allocate.poke(true.B)
+        dut.clock.step(3)
+
+        // NOTE: 2 entries are left back in the ROB
+        // one because of the way a circular buffers work
+        // one to allocate in case of awkward flush situations
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(false.B)
         dut.clock.step()
 
         // commit inst 1
+        dut.io.allocate.poke(false.B)
         dut.io.instSignals.valid.poke(false.B)
-        dut.io.commitRobIdx.valid.poke(true.B)
-        dut.io.commitRobIdx.bits.poke(0.U)
+        dut.io.commitRobIdx0.valid.poke(true.B)
+        dut.io.commitRobIdx0.bits.poke(0.U)
         dut.clock.step()
 
         // expect inst 1 to retire
@@ -1147,57 +1159,67 @@ object Main {
         dut.io.retireInst.bits.signals.fetchSignals.instruction.valid.expect(true.B)
         dut.io.retireInst.bits.signals.fetchSignals.instruction.bits.expect(0x01.U)
         // commit inst 3
-        dut.io.commitRobIdx.valid.poke(true.B)
-        dut.io.commitRobIdx.bits.poke(2.U)
+        dut.io.commitRobIdx0.valid.poke(true.B)
+        dut.io.commitRobIdx0.bits.poke(2.U)
         dut.clock.step()
 
         // nothing should retire
         // BUT, should be able to allocate now
         // as inst 1 is retired now
         // inst 5
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(6.U)
+        dut.io.commitRobIdx0.valid.poke(false.B)
+        dut.clock.step()
+
         dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.data.robIdx.poke(6.U)
         dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
         dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x05.U)
-        dut.io.robIdx.valid.expect(true.B)
-        dut.io.robIdx.bits.expect(3.U)
-        // ----------------------------------------
-        dut.io.commitRobIdx.valid.poke(false.B)
+
         dut.io.retireInst.valid.expect(false.B)
         dut.clock.step()
 
         // still nothing should retire
         dut.io.instSignals.valid.poke(false.B)
-        dut.io.commitRobIdx.valid.poke(false.B)
-        // ----------------------------------------
         dut.io.retireInst.valid.expect(false.B)
         dut.clock.step()
 
         // commit instruction 2
         // still nothing should retire
-        dut.io.commitRobIdx.valid.poke(true.B)
-        dut.io.commitRobIdx.bits.poke(1.U)
+        dut.io.commitRobIdx0.valid.poke(true.B)
+        dut.io.commitRobIdx0.bits.poke(1.U)
         // ----------------------------------------
         dut.io.retireInst.valid.expect(false.B)
         dut.clock.step()
 
         // now, 2 & 3 should retire
-        dut.io.commitRobIdx.valid.poke(false.B)
+        dut.io.commitRobIdx0.valid.poke(false.B)
         // ----------------------------------------
         dut.io.retireInst.valid.expect(true.B)
         dut.io.retireInst.bits.signals.fetchSignals.instruction.valid.expect(true.B)
         dut.io.retireInst.bits.signals.fetchSignals.instruction.bits.expect(0x02.U)
         dut.clock.step()
 
-        // inst 6
-        dut.io.instSignals.valid.poke(true.B)
-        dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
-        dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x06.U)
-        dut.io.robIdx.valid.expect(true.B)
-        dut.io.robIdx.bits.expect(0.U)
-        // ----------------------------------------
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(7.U)
         dut.io.retireInst.valid.expect(true.B)
+
         dut.io.retireInst.bits.signals.fetchSignals.instruction.valid.expect(true.B)
         dut.io.retireInst.bits.signals.fetchSignals.instruction.bits.expect(0x03.U)
+        dut.clock.step()
+
+        // inst 6
+        dut.io.allocate.poke(true.B)
+        dut.io.allocatedIdx.valid.expect(true.B)
+        dut.io.allocatedIdx.bits.expect(0.U)
+
+        dut.io.instSignals.valid.poke(true.B)
+        dut.io.instSignals.bits.data.robIdx.poke(7.U)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.valid.poke(true.B)
+        dut.io.instSignals.bits.data.fetchSignals.instruction.bits.poke(0x06.U)
         dut.clock.step()
 
         dut.io.instSignals.valid.poke(false.B)
@@ -1327,15 +1349,11 @@ object Main {
         dut.io.allocate.valid.poke(false.B)
         dut.io.allocatedIdx.valid.expect(false.B)
       }
-
-      // todo: add more test cases maybe?
     }
-    */
 
     {
       implicit val params = getParams()
 
-      /*
       println("Main: Dependency Testing Start")
       test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
         val instructions = Seq(
@@ -1479,116 +1497,14 @@ object Main {
           memory(i) = 0.toByte
         }
 
-        printMem(memory, 8, toRevLongHex)
+        printMem(memory, 8, toRevLong)
 
-        var ackValid = false
-        var ackSize = 0
-        var readValue = 0L
+        testO3(dut, instructions, memory, 256)
 
-        var completed = false
-        var countDown = 0
+        printMem(memory, 8, toRevLong)
 
-        breakable {
-          while(true) {
-            if (completed) {
-              if (0 == countDown) {
-                println("program returned")
-                break
-              }
-
-              countDown -= 1
-            }
-
-            dut.io.iReadAddr.valid.expect(true.B)
-            dut.io.iReadAddr.ready.poke(true.B)
-
-            val instIdx = dut.io.iReadAddr.bits.peek().litValue.intValue / 4
-
-            println(s"Fetching instIdx: $instIdx")
-
-            if (instIdx == 256) {
-              if (!completed) {
-                // wait for the retires to complete
-                completed = true
-                countDown = 100
-              }
-            } else if (instIdx < instructions.length) {
-              dut.io.iReadValue.valid.poke(true.B)
-              dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
-              dut.io.iReadValue.ready.expect(true.B)
-            } else {
-              dut.io.iReadValue.valid.poke(false.B)
-            }
-
-            if (ackValid) {
-              ackValid = false
-
-              // require(dut.io.dMem.valid.peek().litToBoolean)
-              // require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
-
-              dut.io.dMemAck.valid.poke(true.B)
-              dut.io.dMemAck.bits.value.poke(readValue.U)
-              dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
-              dut.io.dMemAck.ready.expect(true.B)
-            } else if (dut.io.dMem.valid.peek().litToBoolean) {
-              dut.io.dMem.ready.poke(true.B)
-
-              val addr = dut.io.dMem.bits.addr.peek().litValue.toInt
-              val size = 1 << dut.io.dMem.bits.size.peek().litValue.intValue
-              val write = dut.io.dMem.bits.write.valid.peek().litToBoolean
-
-              println(s"addr: $addr size: $size write: $write")
-
-              if (write) {
-                var writeVal = dut.io.dMem.bits.write.bits.value.peek().litValue.toLong
-                var writeMask = dut.io.dMem.bits.write.bits.mask.peek().litValue.toInt
-
-                println(s"Main: writing: ${writeVal.toHexString}, mask: ${writeMask.toBinaryString}")
-
-                for (rOff <- 0 until size) {
-                  val off = size - rOff - 1
-
-                  if (0 != (writeMask & 1)) {
-                    memory(addr + off) = (writeVal & 0xFF).toByte
-                  }
-
-                  writeVal = writeVal >>> 8
-                  writeMask = writeMask >>> 1
-                }
-
-                ackSize = size
-              } else {
-                ackSize = size
-                readValue = 0
-
-                if (addr + size <= memSize) {
-                  for (off <- 0 until size) {
-                    var memValue = memory(addr + off).toInt
-
-                    memValue = (memValue << 24) >>> 24
-
-                    readValue = readValue << 8
-                    readValue = readValue | memValue
-                  }
-                }
-
-                println(s"Main: reading: ${readValue.toHexString}")
-              }
-
-              ackValid = true
-              dut.io.dMemAck.valid.poke(false.B)
-            } else {
-              dut.io.dMemAck.valid.poke(false.B)
-            }
-
-            dut.clock.step()
-          }
-        }
-
-        printMem(memory, 8, toRevLongHex)
-
-        require(toRevLongHex(memory.slice(1008, 1016)) == "400")
-        require(toRevLongHex(memory.slice(1016, 1024)) == "400")
+        require(toRevLong(memory.slice(1008, 1016)) == 0x400)
+        require(toRevLong(memory.slice(1016, 1024)) == 0x400)
       }
       println("Main: LD/ST Forward Testing Finish")
 
@@ -1635,104 +1551,13 @@ object Main {
           memory(i) = 0.toByte
         }
 
-        printMem(memory, 8, toRevLongHex)
+        printMem(memory, 8, toRevLong)
 
-        var ackValid = false
-        var ackSize = 0
-        var readValue = 0L
+        testO3(dut, instructions, memory, 256)
 
-        breakable {
-          while(true) {
-            dut.io.iReadAddr.valid.expect(true.B)
-            dut.io.iReadAddr.ready.poke(true.B)
-
-            val instIdx = dut.io.iReadAddr.bits.peek().litValue.intValue / 4
-
-            println(s"Fetching instIdx: $instIdx")
-
-            if (instIdx == 256) {
-              dut.clock.step(100)
-              println("program returned")
-              break
-            } else if (instIdx < instructions.length) {
-              dut.io.iReadValue.valid.poke(true.B)
-              dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
-              dut.io.iReadValue.ready.expect(true.B)
-            } else {
-              dut.io.iReadValue.valid.poke(false.B)
-            }
-
-            if (ackValid) {
-              ackValid = false
-
-              // require(dut.io.dMem.valid.peek().litToBoolean)
-              // require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
-
-              dut.io.dMemAck.valid.poke(true.B)
-              dut.io.dMemAck.bits.value.poke(readValue.U)
-              dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
-              dut.io.dMemAck.ready.expect(true.B)
-            } else if (dut.io.dMem.valid.peek().litToBoolean) {
-              dut.io.dMem.ready.poke(true.B)
-
-              val addr = dut.io.dMem.bits.addr.peek().litValue.toInt
-              val size = 1 << dut.io.dMem.bits.size.peek().litValue.intValue
-              val write = dut.io.dMem.bits.write.valid.peek().litToBoolean
-
-              println(s"addr: $addr size: $size write: $write")
-
-              if (write) {
-                var writeVal = dut.io.dMem.bits.write.bits.value.peek().litValue.toLong
-                var writeMask = dut.io.dMem.bits.write.bits.mask.peek().litValue.toInt
-
-                println(s"Main: writing: ${writeVal.toHexString}, mask: ${writeMask.toBinaryString}")
-
-                for (rOff <- 0 until size) {
-                  val off = size - rOff - 1
-
-                  if (0 != (writeMask & 1)) {
-                    memory(addr + off) = (writeVal & 0xFF).toByte
-                  }
-
-                  writeVal = writeVal >>> 8
-                  writeMask = writeMask >>> 1
-                }
-
-                ackSize = size
-              } else {
-                ackSize = size
-                readValue = 0
-
-                if (addr + size <= memSize) {
-                  for (off <- 0 until size) {
-                    var memValue = memory(addr + off).toInt
-
-                    memValue = (memValue << 24) >>> 24
-
-                    readValue = readValue << 8
-                    readValue = readValue | memValue
-                  }
-                }
-
-                println(s"Main: reading: ${readValue.toHexString}")
-              }
-
-              ackValid = true
-              dut.io.dMemAck.valid.poke(false.B)
-            } else {
-              dut.io.dMemAck.valid.poke(false.B)
-            }
-
-            dut.clock.step()
-          }
-        }
-
-        printMem(memory, 8, toRevLongHex)
+        printMem(memory, 8, toRevLong)
       }
       println("Main: ST Testing Finish")
-      */
-
-      // todo: test the store buffer forwarding
 
       println("Main: CUM SUM Testing Start")
       test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
@@ -1779,104 +1604,18 @@ object Main {
           memory(i) = 0.toByte
         }
 
-        printMem(memory, 8, toRevLongHex)
+        printMem(memory, 8, toRevLong)
 
-        var ackValid = false
-        var ackSize = 0
-        var readValue = 0L
+        testO3(dut, instructions, memory, 256)
 
-        breakable {
-          while(true) {
-            dut.io.iReadAddr.valid.expect(true.B)
-            dut.io.iReadAddr.ready.poke(true.B)
+        require(toRevLong(memory.slice(992, 1000)) == 0x07)
+        require(toRevLong(memory.slice(1000, 1008)) == 0x0d)
+        require(toRevLong(memory.slice(1008, 1016)) == 0x12)
+        require(toRevLong(memory.slice(1016, 1024)) == 0x16)
 
-            val instIdx = dut.io.iReadAddr.bits.peek().litValue.intValue / 4
-
-            println(s"Fetching instIdx: $instIdx")
-
-            if (instIdx == 256) {
-              dut.clock.step(100)
-              println("program returned")
-              break
-            } else if (instIdx < instructions.length) {
-              dut.io.iReadValue.valid.poke(true.B)
-              dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
-              dut.io.iReadValue.ready.expect(true.B)
-            } else {
-              dut.io.iReadValue.valid.poke(false.B)
-            }
-
-            if (ackValid) {
-              ackValid = false
-
-              // require(dut.io.dMem.valid.peek().litToBoolean)
-              // require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
-
-              dut.io.dMemAck.valid.poke(true.B)
-              dut.io.dMemAck.bits.value.poke(((BigInt(readValue >>> 1) << 1) + (readValue & 1)).U)
-              dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
-              dut.io.dMemAck.ready.expect(true.B)
-            } else if (dut.io.dMem.valid.peek().litToBoolean) {
-              dut.io.dMem.ready.poke(true.B)
-
-              val addr = dut.io.dMem.bits.addr.peek().litValue.toInt
-              val size = 1 << dut.io.dMem.bits.size.peek().litValue.intValue
-              val write = dut.io.dMem.bits.write.valid.peek().litToBoolean
-
-              println(s"addr: $addr size: $size write: $write")
-
-              if (write) {
-                var writeVal = dut.io.dMem.bits.write.bits.value.peek().litValue.toLong
-                var writeMask = dut.io.dMem.bits.write.bits.mask.peek().litValue.toInt
-
-                println(s"Main: writing: ${writeVal.toHexString} / ${java.lang.Long.reverse(writeVal).toHexString}, mask: ${writeMask.toBinaryString}")
-
-                for (rOff <- 0 until size) {
-                  val off = size - rOff - 1
-
-                  if (0 != (writeMask & 1)) {
-                    memory(addr + off) = (writeVal & 0xFF).toByte
-                  }
-
-                  writeVal = writeVal >>> 8
-                  writeMask = writeMask >>> 1
-                }
-
-                ackSize = size
-              } else {
-                ackSize = size
-                readValue = 0
-
-                if (addr + size <= memSize) {
-                  for (off <- 0 until size) {
-                    var memValue = memory(addr + off).toInt
-
-                    memValue = (memValue << 24) >>> 24
-
-                    readValue = readValue << 8
-                    readValue = readValue | memValue
-                  }
-                }
-
-                println(s"Main: reading: ${readValue.toHexString}")
-              }
-
-              ackValid = true
-              dut.io.dMemAck.valid.poke(false.B)
-            } else {
-              dut.io.dMemAck.valid.poke(false.B)
-            }
-
-            dut.clock.step()
-          }
-        }
-
-        Thread.sleep(1000)
-        printMem(memory, 8, toRevLongHex)
+        printMem(memory, 8, toRevLong)
       }
       println("Main: CUM SUM Testing Finish")
-
-      return
 
       println("Main: Q SORT Testing Start")
       test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
@@ -1980,98 +1719,11 @@ object Main {
           memory(i) = 0.toByte
         }
 
-        printMem(memory, 8, toRevLongHex)
+        printMem(memory, 8, toRevLong)
 
-        var ackValid = false
-        var ackSize = 0
-        var readValue = 0L
+        testO3(dut, instructions, memory, 256)
 
-        breakable {
-          while(true) {
-            dut.io.iReadAddr.valid.expect(true.B)
-            dut.io.iReadAddr.ready.poke(true.B)
-
-            val instIdx = dut.io.iReadAddr.bits.peek().litValue.intValue / 4
-
-            println(s"Fetching instIdx: $instIdx")
-
-            if (instIdx == 256) {
-              println("program returned")
-              break
-            } else if (instIdx < instructions.length) {
-              dut.io.iReadValue.valid.poke(true.B)
-              dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
-              dut.io.iReadValue.ready.expect(true.B)
-            } else {
-              dut.io.iReadValue.valid.poke(false.B)
-            }
-
-            if (ackValid) {
-              ackValid = false
-
-              // require(dut.io.dMem.valid.peek().litToBoolean)
-              // require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
-
-              dut.io.dMemAck.valid.poke(true.B)
-              dut.io.dMemAck.bits.value.poke(((BigInt(readValue >>> 1) << 1) + (readValue & 1)).U)
-              dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
-              dut.io.dMemAck.ready.expect(true.B)
-            } else if (dut.io.dMem.valid.peek().litToBoolean) {
-              dut.io.dMem.ready.poke(true.B)
-
-              val addr = dut.io.dMem.bits.addr.peek().litValue.toInt
-              val size = 1 << dut.io.dMem.bits.size.peek().litValue.intValue
-              val write = dut.io.dMem.bits.write.valid.peek().litToBoolean
-
-              println(s"addr: $addr size: $size write: $write")
-
-              if (write) {
-                var writeVal = dut.io.dMem.bits.write.bits.value.peek().litValue.toLong
-                var writeMask = dut.io.dMem.bits.write.bits.mask.peek().litValue.toInt
-
-                println(s"Main: writing: ${writeVal.toHexString}, mask: ${writeMask.toBinaryString}")
-
-                for (rOff <- 0 until size) {
-                  val off = size - rOff - 1
-
-                  if (0 != (writeMask & 1)) {
-                    memory(addr + off) = (writeVal & 0xFF).toByte
-                  }
-
-                  writeVal = writeVal >>> 8
-                  writeMask = writeMask >>> 1
-                }
-
-                ackSize = size
-              } else {
-                ackSize = size
-                readValue = 0
-
-                if (addr + size <= memSize) {
-                  for (off <- 0 until size) {
-                    var memValue = memory(addr + off).toInt
-
-                    memValue = (memValue << 24) >>> 24
-
-                    readValue = readValue << 8
-                    readValue = readValue | memValue
-                  }
-                }
-
-                println(s"Main: reading: ${readValue.toHexString}")
-              }
-
-              ackValid = true
-              dut.io.dMemAck.valid.poke(false.B)
-            } else {
-              dut.io.dMemAck.valid.poke(false.B)
-            }
-
-            dut.clock.step()
-          }
-        }
-
-        printMem(memory, 8, toRevLongHex)
+        printMem(memory, 8, toRevLong)
       }
       println("Main: Q SORT Testing Finish")
     }

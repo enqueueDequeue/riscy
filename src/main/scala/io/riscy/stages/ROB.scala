@@ -35,6 +35,12 @@ class ROB()(implicit val params: Parameters) extends Module {
       val robIdx = UInt(log2Ceil(nROBEntries).W)
     }))
 
+    // exception
+    val exception = Input(Valid(new Bundle {
+      // todo: may need a description of the exception?
+      val robIdx = UInt(log2Ceil(nROBEntries).W)
+    }))
+
     // instruction commit
     val commitRobIdx0 = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
     val commitRobIdx1 = Input(Valid(UInt(log2Ceil(nROBEntries).W)))
@@ -69,6 +75,7 @@ class ROB()(implicit val params: Parameters) extends Module {
   val entries = Mem(nROBEntries, Valid(new Bundle {
     val committed = Bool()
     val flush = Bool()
+    val exception = Bool()
     val pc = UInt(addrWidth.W)
     val data = new ROBSignals()
   }))
@@ -106,6 +113,15 @@ class ROB()(implicit val params: Parameters) extends Module {
     }
   }
 
+  when(io.exception.valid) {
+    printf(cf"ROB: exception: ${io.exception.bits}\n")
+
+    assert(entries(io.exception.bits.robIdx).valid, "Cannot except invalid entry")
+
+    entries(io.exception.bits.robIdx).bits.committed := true.B
+    entries(io.exception.bits.robIdx).bits.exception := true.B
+  }
+
   robTailIn2 := robTailIn1
 
   when(io.allocate && canAllocate) {
@@ -134,6 +150,7 @@ class ROB()(implicit val params: Parameters) extends Module {
     entries(robIdx).valid := true.B
     entries(robIdx).bits.committed := false.B
     entries(robIdx).bits.flush := false.B
+    entries(robIdx).bits.exception := false.B
     entries(robIdx).bits.pc := io.instSignals.bits.pc
     entries(robIdx).bits.data := io.instSignals.bits.data
   }
@@ -186,6 +203,9 @@ class ROB()(implicit val params: Parameters) extends Module {
     io.retireInst.bits.pc := entries(robHead).bits.pc
     io.retireInst.bits.flush := entries(robHead).bits.flush
     io.retireInst.bits.signals := entries(robHead).bits.data
+
+    // todo: currently not handling exceptions
+    assert(!entries(robHead).bits.exception, cf"Exception thrown at robIdx: $robHead")
 
     when(entries(robHead).bits.flush) {
       printf(cf"ROB: flushing\n")

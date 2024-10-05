@@ -94,6 +94,7 @@ object Main {
     val memSize = memory.length
 
     var ackValid = false
+    var ackAddr = 0L
     var ackSize = 0
     var readValue = 0L
 
@@ -102,15 +103,6 @@ object Main {
 
     breakable {
       while(true) {
-        if (completed) {
-          if (0 == countDown) {
-            println("program returned")
-            break
-          }
-
-          countDown -= 1
-        }
-
         dut.io.iReadAddr.valid.expect(true.B)
         dut.io.iReadAddr.ready.poke(true.B)
 
@@ -121,24 +113,36 @@ object Main {
         if (instIdx == endInstIdx) {
           dut.io.iReadValue.valid.poke(false.B)
 
+          // make sure it didn't jump by fluke.
           if (!completed) {
             // wait for the retires to complete
             completed = true
             countDown = targetCountDown
+          } else {
+            if (0 == countDown) {
+              println("program returned")
+              break
+            }
+
+            countDown -= 1
           }
-        } else if (instIdx < instructions.length) {
-          dut.io.iReadValue.valid.poke(true.B)
-          dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
-          dut.io.iReadValue.ready.expect(true.B)
         } else {
-          dut.io.iReadValue.valid.poke(false.B)
+          completed = false
+
+          if (instIdx < instructions.length) {
+            dut.io.iReadValue.valid.poke(true.B)
+            dut.io.iReadValue.bits.poke(instructions(instIdx).asUInt)
+            dut.io.iReadValue.ready.expect(true.B)
+          } else {
+            dut.io.iReadValue.valid.poke(false.B)
+          }
         }
 
         if (ackValid) {
           ackValid = false
 
-          // require(dut.io.dMem.valid.peek().litToBoolean)
-          // require(!dut.io.dMem.bits.write.valid.peek().litToBoolean)
+          require(dut.io.dMem.valid.peek().litToBoolean)
+          require(dut.io.dMem.bits.addr.peek().litValue == ackAddr)
 
           dut.io.dMemAck.valid.poke(true.B)
           dut.io.dMemAck.bits.value.poke(((BigInt(readValue >>> 1) << 1) + (readValue & 1)).U)
@@ -170,8 +174,10 @@ object Main {
               writeMask = writeMask >>> 1
             }
 
+            ackAddr = addr
             ackSize = size
           } else {
+            ackAddr = addr
             ackSize = size
             readValue = 0
 
@@ -1726,6 +1732,122 @@ object Main {
         printMem(memory, 8, toRevLong)
       }
       println("Main: Q SORT Testing Finish")
+
+      println("Main: Q SORT i32 Testing Start")
+      test(new OutOfOrderCPU(), Seq(VerilatorBackendAnnotation)) { dut =>
+        val instructions = Seq(
+          // set return address to out of bounds
+          0x40000093L,
+          // update stack size = 8192
+          0x40000113L,
+          0x40010113L,
+          0x40010113L,
+          0x40010113L,
+          0x40010113L,
+          0x40010113L,
+          0x40010113L,
+          0x40010113L,
+          // actual instructions
+          0xe6010113L,
+          0x18113c23L,
+          0x00810513L,
+          0x19810593L,
+          0x0000b637L,
+          0xce160613L,
+          0x0026569bL,
+          0x0036571bL,
+          0x00565793L,
+          0x00e6c6b3L,
+          0x00c7c7b3L,
+          0x00f6c6b3L,
+          0x03061613L,
+          0x03165613L,
+          0x03f69693L,
+          0x0306d693L,
+          0x00d66633L,
+          0x00c52023L,
+          0x00450513L,
+          0xfcb516e3L,
+          0x06300593L,
+          0x00810613L,
+          0x00000513L,
+          0x010000efL,
+          0x19813083L,
+          0x1a010113L,
+          0x00008067L,
+          0x0ab55a63L,
+          0xfd010113L,
+          0x02113423L,
+          0x02813023L,
+          0x00913c23L,
+          0x01213823L,
+          0x01313423L,
+          0x00060993L,
+          0x00058913L,
+          0x00259413L,
+          0x00c40433L,
+          0x00050493L,
+          0x0300006fL,
+          0x00042583L,
+          0x00249613L,
+          0x01360633L,
+          0x00062683L,
+          0x00b62023L,
+          0x00d42023L,
+          0xfff4859bL,
+          0x00098613L,
+          0xfadff0efL,
+          0x00048513L,
+          0x0524d063L,
+          0x00042583L,
+          0x00251613L,
+          0x01360633L,
+          0x00c0006fL,
+          0x00460613L,
+          0xfc8600e3L,
+          0x00062683L,
+          0xfed5cae3L,
+          0x00249713L,
+          0x01370733L,
+          0x00072783L,
+          0x00d72023L,
+          0x00f62023L,
+          0x0014849bL,
+          0xfd9ff06fL,
+          0x02813083L,
+          0x02013403L,
+          0x01813483L,
+          0x01013903L,
+          0x00813983L,
+          0x03010113L,
+          0x00008067L,
+          // buffering a few instructions at the end
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+          0x00000033L, // ADD x0, x0, x0
+        )
+
+        println("O3 Quick Sort i32 testing")
+
+        val memSize = 8192
+        val memory = new Array[Byte](memSize)
+
+        for (i <- memory.indices) {
+          memory(i) = 0.toByte
+        }
+
+        printMem(memory, 8, toRevLong)
+
+        testO3(dut, instructions, memory, 256)
+
+        Thread.sleep(100)
+
+        printMem(memory, 8, toRevLong)
+      }
+      println("Main: Q SORT i32 Testing Finish")
     }
 
     println("Compiling")

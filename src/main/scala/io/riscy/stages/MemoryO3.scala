@@ -119,6 +119,13 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     val initSignals = Wire(Valid(new Bundle {
       val ignore = Bool()
       val idx = new LoadStoreIndex()
+
+      // holding values
+      val addr = UInt(addrWidth.W)
+      val size = UInt(log2Ceil(dataWidth / bitWidth).W)
+      val write = Bool()
+      val writeMask = UInt(dataBytes.W)
+      val writeValue = UInt(dataWidth.W)
     }))
 
     initSignals.valid := false.B
@@ -348,9 +355,14 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     assert(stEntry.mask.valid)
     assert(stEntry.data.valid)
 
+    val addr = align(stEntry.address.bits, dataBytes)
+    val size = log2Ceil(dataBytes).U
+    val mask = Reverse(stEntry.mask.bits)
+    val value = Reverse(stEntry.data.bits)
+
     io.dMem.valid := true.B
-    io.dMem.bits.addr := align(stEntry.address.bits, dataBytes)
-    io.dMem.bits.size := log2Ceil(dataBytes).U
+    io.dMem.bits.addr := addr
+    io.dMem.bits.size := size
 
     // Endianness is quintessential
     // Store long to address 0
@@ -360,8 +372,8 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     io.dMem.bits.write.valid := true.B
 
     // Reversing to main memory here
-    io.dMem.bits.write.bits.mask := Reverse(stEntry.mask.bits)
-    io.dMem.bits.write.bits.value := Reverse(stEntry.data.bits)
+    io.dMem.bits.write.bits.mask := mask
+    io.dMem.bits.write.bits.value := value
 
     when(io.dMem.ready) {
       storeQueue(stFireIdx.bits).fired := true.B
@@ -370,6 +382,12 @@ class MemoryO3()(implicit params: Parameters) extends Module {
       requestInProgress.bits.ignore := false.B
       requestInProgress.bits.idx.rwDirection := MemRWDirection.write
       requestInProgress.bits.idx.idx := resize(stFireIdx.bits, LoadStoreIndex.width())
+
+      requestInProgress.bits.addr := addr
+      requestInProgress.bits.size := size
+      requestInProgress.bits.write := true.B
+      requestInProgress.bits.writeMask := mask
+      requestInProgress.bits.writeValue := value
     }
 
     printf(cf"Memory: store fired entry: ${stFireIdx.bits} => $stEntry\n")
@@ -378,9 +396,12 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 
     assert(ldEntry.address.valid)
 
+    val addr = align(ldEntry.address.bits, dataBytes)
+    val size = log2Ceil(dataBytes).U
+
     io.dMem.valid := true.B
-    io.dMem.bits.addr := align(ldEntry.address.bits, dataBytes)
-    io.dMem.bits.size := log2Ceil(dataBytes).U
+    io.dMem.bits.addr := addr
+    io.dMem.bits.size := size
 
     io.dMem.bits.write.valid := false.B
     io.dMem.bits.write.bits := DontCare
@@ -392,6 +413,12 @@ class MemoryO3()(implicit params: Parameters) extends Module {
       requestInProgress.bits.ignore := false.B
       requestInProgress.bits.idx.rwDirection := MemRWDirection.read
       requestInProgress.bits.idx.idx := resize(ldFireIdx.bits, LoadStoreIndex.width())
+
+      requestInProgress.bits.addr := addr
+      requestInProgress.bits.size := size
+      requestInProgress.bits.write := false.B
+      requestInProgress.bits.writeMask := DontCare
+      requestInProgress.bits.writeValue := DontCare
     }
 
     printf(cf"Memory: load fired entry: ${ldFireIdx.bits} => $ldEntry\n")
@@ -404,7 +431,12 @@ class MemoryO3()(implicit params: Parameters) extends Module {
 
   // hold the values when the request is in progress
   when(requestInProgress.valid) {
-    // todo: hold the signals
+    io.dMem.valid := true.B
+    io.dMem.bits.addr := requestInProgress.bits.addr
+    io.dMem.bits.size := requestInProgress.bits.size
+    io.dMem.bits.write.valid := requestInProgress.bits.write
+    io.dMem.bits.write.bits.mask := requestInProgress.bits.writeMask
+    io.dMem.bits.write.bits.value := requestInProgress.bits.writeValue
   }
 
   when(io.dMemAck.valid) {

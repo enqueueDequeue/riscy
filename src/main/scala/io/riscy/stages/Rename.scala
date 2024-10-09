@@ -1,7 +1,7 @@
 package io.riscy.stages
 
 import chisel3.util.{PriorityMux, Valid, isPow2, log2Ceil}
-import chisel3.{Bool, Bundle, DontCare, Input, Module, Mux, Output, PrintableHelper, RegInit, UInt, Vec, VecInit, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
+import chisel3.{Bool, Bundle, DontCare, Input, Mem, Module, Mux, Output, PrintableHelper, Reg, RegInit, UInt, Vec, VecInit, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.stages.signals.Parameters
 
 class Rename()(implicit val params: Parameters) extends Module {
@@ -64,35 +64,29 @@ class Rename()(implicit val params: Parameters) extends Module {
   })
 
   // register alias tables
-  val rat = RegInit(VecInit(Seq.fill(nArchRegs)(0.U(log2Ceil(nPhyRegs).W))))
-  val retirementRat = RegInit(VecInit(Seq.fill(nArchRegs) {
-    val initSignals = Wire(Valid(UInt(log2Ceil(nPhyRegs).W)))
-
-    initSignals.valid := false.B
-    initSignals.bits := 0.U
-
-    initSignals
-  }))
-
-  // helpers along the way
+  val rat = Reg(Vec(nArchRegs, UInt(log2Ceil(nPhyRegs).W)))
+  val rrat = Reg(Vec(nArchRegs, UInt(log2Ceil(nPhyRegs).W)))
+  val rratValid = RegInit(0.U(nArchRegs.W))
 
   io.rs1PhyReg := rat(io.rs1)
   io.rs2PhyReg := rat(io.rs2)
 
   when(io.retire.valid) {
-    val freeRegister = retirementRat(io.retire.bits.arch)
+    val freeRegister = rrat(io.retire.bits.arch)
+    val freeRegisterValid = rratValid(io.retire.bits.arch)
 
     // mark the current register as free if it's valid
     printf(cf"Rename: freeing: $freeRegister, retiring: p${io.retire.bits.phy} @ a${io.retire.bits.arch}\n")
 
-    when(freeRegister.valid) {
-      freeRegs := (freeRegs | (1.U << freeRegister.bits).asUInt)
+    rrat(io.retire.bits.arch) := io.retire.bits.phy
+    rratValid := rratValid | (1.U << io.retire.bits.arch).asUInt
+
+    when(freeRegisterValid) {
+      freeRegs := (freeRegs | (1.U << freeRegister).asUInt)
     }
 
-    retirementRat(io.retire.bits.arch).valid := true.B
-    retirementRat(io.retire.bits.arch).bits := io.retire.bits.phy
-
-    io.deallocationIdx := freeRegister
+    io.deallocationIdx.valid := freeRegisterValid
+    io.deallocationIdx.bits := freeRegister
   }.otherwise {
     io.deallocationIdx.valid := false.B
     io.deallocationIdx.bits := DontCare
@@ -103,32 +97,34 @@ class Rename()(implicit val params: Parameters) extends Module {
   }
 
   when(io.flush) {
-    val nextFreeRegs = Wire(Vec(nPhyRegs, Bool()))
+    val nextFreeRegs = Wire(UInt(nPhyRegs.W))
+
+    printf(cf"flushing")
 
     for (idx <- 0 until nArchRegs) {
-      printf(cf"Rename: Copying ${retirementRat(idx)} -> ${rat(idx)}\n")
+      printf(cf"Rename: Copying ${rrat(idx)} valid: ${rratValid(idx)} -> ${rat(idx)}\n")
     }
 
-    for (idx <- 0 until nPhyRegs) {
-      nextFreeRegs(idx) := true.B
-    }
+    val occupiedRegs = Seq.tabulate(nArchRegs) { idx => Mux(rratValid(idx), (1.U << rrat(idx)).asUInt, 0.U) }
 
-    for (idx <- 0 until nArchRegs) {
-      when(retirementRat(idx).valid) {
-        nextFreeRegs(retirementRat(idx).bits) := false.B
-      }
-    }
+    nextFreeRegs := (~occupiedRegs.reduce(_ | _)).asUInt
 
     for (idx <- 0 until nArchRegs) {
-      rat(idx) := Mux(retirementRat(idx).valid, retirementRat(idx).bits, 0.U)
+      // idx is not valid meaning, that the no instruction using this dst
+      // register has retired yet. So, no instruction after the flush should
+      // read this register. So, even if the bits are pointing to a random index
+      // it is still fine.
+      // rat(idx) := Mux(rratValid(idx), rrat(idx), 0.U)
+
+      rat(idx) := rrat(idx)
     }
 
     printf(cf"Rename: freeRegs: $freeRegs%b\n")
-    printf(cf"Rename: freeRegs: ${nextFreeRegs.asUInt}%b\n")
+    printf(cf"Rename: freeRegs: ${nextFreeRegs}%b\n")
 
-    freeRegs := nextFreeRegs.asUInt
+    freeRegs := nextFreeRegs
     io.allocatedRegs.valid := true.B
-    io.allocatedRegs.bits := ~nextFreeRegs.asUInt
+    io.allocatedRegs.bits := ~nextFreeRegs
   }.otherwise {
     io.allocatedRegs.valid := false.B
     io.allocatedRegs.bits := DontCare

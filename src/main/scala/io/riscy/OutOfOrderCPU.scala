@@ -294,7 +294,7 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   // rename input
   rename.io.rs1 := idRenameSignals.bits.stage.decode.rs1
   rename.io.rs2 := idRenameSignals.bits.stage.decode.rs2
-  rename.io.rd.valid := idRenameSignals.valid && idRenameSignals.bits.stage.alloc.dstReg.valid && idRenameSignals.bits.stage.decode.regWrite
+  rename.io.rd.valid := !flush && idRenameSignals.valid && idRenameSignals.bits.stage.alloc.dstReg.valid && idRenameSignals.bits.stage.decode.regWrite
   rename.io.rd.bits.arch := idRenameSignals.bits.stage.decode.rd
   rename.io.rd.bits.phy := idRenameSignals.bits.stage.alloc.dstReg.bits
 
@@ -320,7 +320,7 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
 
   // ROB
   // rob input
-  rob.io.instSignals.valid := renameRobIqSignals.valid
+  rob.io.instSignals.valid := !flush && renameRobIqSignals.valid
   rob.io.instSignals.bits.pc := renameRobIqSignals.bits.pc
   rob.io.instSignals.bits.data.robIdx := renameRobIqSignals.bits.stage.alloc.robIdx
   rob.io.instSignals.bits.data.fetchSignals := renameRobIqSignals.bits.stage.fetch
@@ -330,7 +330,7 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
 
   // Issue
   // iq input
-  iq.io.instSignals.valid := renameRobIqSignals.valid
+  iq.io.instSignals.valid := !flush && renameRobIqSignals.valid
   iq.io.instSignals.bits.iqIdx := renameRobIqSignals.bits.stage.alloc.iqIdx
   iq.io.instSignals.bits.robIdx := renameRobIqSignals.bits.stage.alloc.robIdx
 

@@ -409,8 +409,9 @@ object Main {
         dut.io.allocatedIdx.valid.expect(false.B)
         dut.clock.step()
 
-        dut.io.flush.poke(true.B)
+        dut.io.rd.valid.poke(false.B)
         dut.io.allocate.poke(false.B)
+        dut.io.flush.poke(true.B)
         dut.clock.step()
 
         dut.io.flush.poke(false.B)

@@ -107,19 +107,29 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   // fetch input
   fetch.io.pc := pc
 
+  val ifIdSignalsW = Wire(Valid(Stage(new Bundle {
+    val fetch = FetchSignals()
+  })))
+
   // fetch output
   when(fetch.io.inst.valid) {
-    ifIdSignals.valid := true.B
-    ifIdSignals.bits.pc := pc
-    ifIdSignals.bits.stage.fetch.instruction.valid := true.B
-    ifIdSignals.bits.stage.fetch.instruction.bits := fetch.io.inst.bits
+    ifIdSignalsW.valid := true.B
+    ifIdSignalsW.bits.pc := pc
+    ifIdSignalsW.bits.stage.fetch.instruction.valid := true.B
+    ifIdSignalsW.bits.stage.fetch.instruction.bits := fetch.io.inst.bits
 
     fStall := false.B
   }.otherwise {
-    ifIdSignals.valid := false.B
-    ifIdSignals.bits := DontCare
+    ifIdSignalsW.valid := false.B
+    ifIdSignalsW.bits := DontCare
 
     fStall := true.B
+  }
+
+  // don't update the
+  // signals on dStall
+  when(!dStall) {
+    ifIdSignals := ifIdSignalsW
   }
 
   when(flush) {
@@ -252,6 +262,7 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
     val iqAllocSuccess = iqIdxW.valid
     val memAllocSuccess = (memShouldAllocate && memIdxW.valid) || (!memShouldAllocate)
 
+    printf(cf"O3: decodedSignals: $decodeSignalsOut\n")
     printf(cf"O3: regShouldAllocate:  $regShouldAllocate  ~ $dstRegW\n")
     printf(cf"O3: robAllocSuccess:    $robAllocSuccess    ~ $robIdxW\n")
     printf(cf"O3: iqAllocSuccess:     $iqAllocSuccess     ~ $iqIdxW\n")

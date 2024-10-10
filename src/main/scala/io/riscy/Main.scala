@@ -215,8 +215,8 @@ object Main {
                 bitWidth: Int = 8,
                 nIQEntries: Int = 64,
                 nROBEntries: Int = 64,
-                nLDQEntries: Int = 32,
-                nSTQEntries: Int = 16): Parameters = {
+                nLDQEntries: Int = 8,
+                nSTQEntries: Int = 8): Parameters = {
     Parameters(nArchRegs, nPhyRegs, instWidth, wordWidth, dataWidth, addrWidth, bitWidth, nIQEntries, nROBEntries, nLDQEntries, nSTQEntries)
   }
 
@@ -1615,12 +1615,12 @@ object Main {
 
         testO3(dut, instructions, memory, 256)
 
+        printMem(memory, 8, toRevLong)
+
         require(toRevLong(memory.slice(992, 1000)) == 0x07)
         require(toRevLong(memory.slice(1000, 1008)) == 0x0d)
         require(toRevLong(memory.slice(1008, 1016)) == 0x12)
         require(toRevLong(memory.slice(1016, 1024)) == 0x16)
-
-        printMem(memory, 8, toRevLong)
       }
       println("Main: CUM SUM Testing Finish")
 
@@ -1730,7 +1730,20 @@ object Main {
 
         testO3(dut, instructions, memory, 256)
 
+        Thread.sleep(100)
+
         printMem(memory, 8, toRevLong)
+
+        require(toRevLong(memory.slice(4008, 4016)) == 0x00)
+        require(toRevLong(memory.slice(4016, 4024)) == 0x01)
+        require(toRevLong(memory.slice(4024, 4032)) == 0x02)
+        require(toRevLong(memory.slice(4032, 4040)) == 0x03)
+        require(toRevLong(memory.slice(4040, 4048)) == 0x04)
+        require(toRevLong(memory.slice(4048, 4056)) == 0x05)
+        require(toRevLong(memory.slice(4056, 4064)) == 0x06)
+        require(toRevLong(memory.slice(4064, 4072)) == 0x07)
+        require(toRevLong(memory.slice(4072, 4080)) == 0x08)
+        require(toRevLong(memory.slice(4080, 4088)) == 0x09)
       }
       println("Main: Q SORT Testing Finish")
 

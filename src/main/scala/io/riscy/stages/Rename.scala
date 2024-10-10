@@ -1,7 +1,7 @@
 package io.riscy.stages
 
 import chisel3.util.{PriorityMux, Valid, isPow2, log2Ceil}
-import chisel3.{Bool, Bundle, DontCare, Input, Mem, Module, Mux, Output, PrintableHelper, Reg, RegInit, UInt, Vec, VecInit, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
+import chisel3.{Bool, Bundle, DontCare, Input, Module, Mux, Output, PrintableHelper, Reg, RegInit, UInt, Vec, Wire, assert, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
 import io.riscy.stages.signals.Parameters
 
 class Rename()(implicit val params: Parameters) extends Module {

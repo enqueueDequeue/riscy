@@ -207,7 +207,7 @@ object Main {
   }
 
   def getParams(nArchRegs: Int = 32,
-                nPhyRegs: Int = 128,
+                nPhyRegs: Int = 64,
                 instWidth: Int = 32,
                 wordWidth: Int = 32,
                 dataWidth: Int = 64,

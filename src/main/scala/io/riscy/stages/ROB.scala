@@ -72,13 +72,13 @@ class ROB()(implicit val params: Parameters) extends Module {
   //  at least one entry
   val robHead = RegInit(0.U(log2Ceil(nROBEntries).W))
   val robTail = RegInit(0.U(log2Ceil(nROBEntries).W))
-  val entries = Mem(nROBEntries, Valid(new Bundle {
-    val committed = Bool()
-    val flush = Bool()
-    val exception = Bool()
-    val pc = UInt(addrWidth.W)
-    val data = new ROBSignals()
-  }))
+
+  val entryValidList = Mem(nROBEntries, Bool())
+  val entryCommittedList = Mem(nROBEntries, Bool())
+  val entryFlushedList = Mem(nROBEntries, Bool())
+  val entryExceptedList = Mem(nROBEntries, Bool())
+  val entryPCList = Mem(nROBEntries, UInt(addrWidth.W))
+  val entryDataList = Mem(nROBEntries, new ROBSignals())
 
   val canAllocate = robHead =/= (robTail + 2.U)
 
@@ -90,14 +90,14 @@ class ROB()(implicit val params: Parameters) extends Module {
   when(io.flush.valid) {
     printf(cf"ROB: flushing: ${io.flush.bits}\n")
 
-    when(!entries(io.flush.bits.robIdx).valid) {
+    when(!entryValidList(io.flush.bits.robIdx)) {
       assert(robTail === io.flush.bits.robIdx, "Cannot flush invalid and non-tail entry")
 
       // allocate the rob
       robTailIn1 := robTail + 1.U
 
-      entries(io.flush.bits.robIdx).valid := true.B
-      entries(io.flush.bits.robIdx).bits.committed := true.B
+      entryValidList(io.flush.bits.robIdx) := true.B
+      entryCommittedList(io.flush.bits.robIdx) := true.B
     }
 
     // NOTE: This operation will overwrite the program counter of the flushed instruction
@@ -106,20 +106,20 @@ class ROB()(implicit val params: Parameters) extends Module {
     //       from the program counter of that instruction which will be the updated PC
     //       in this case.
 
-    entries(io.flush.bits.robIdx).bits.flush := true.B
+    entryFlushedList(io.flush.bits.robIdx) := true.B
 
     when(io.flush.bits.updatePc.valid) {
-      entries(io.flush.bits.robIdx).bits.pc := io.flush.bits.updatePc.bits
+      entryPCList(io.flush.bits.robIdx) := io.flush.bits.updatePc.bits
     }
   }
 
   when(io.exception.valid) {
     printf(cf"ROB: exception: ${io.exception.bits}\n")
 
-    assert(entries(io.exception.bits.robIdx).valid, "Cannot except invalid entry")
+    assert(entryValidList(io.exception.bits.robIdx), "Cannot except invalid entry")
 
-    entries(io.exception.bits.robIdx).bits.committed := true.B
-    entries(io.exception.bits.robIdx).bits.exception := true.B
+    entryCommittedList(io.exception.bits.robIdx) := true.B
+    entryExceptedList(io.exception.bits.robIdx) := true.B
   }
 
   robTailIn2 := robTailIn1
@@ -130,7 +130,7 @@ class ROB()(implicit val params: Parameters) extends Module {
     io.allocatedIdx.valid := true.B
     io.allocatedIdx.bits := robTail
 
-    entries(robTail).valid := false.B
+    entryValidList(robTail) := false.B
 
     robTailIn2 := robTailIn1 + 1.U
   }.otherwise {
@@ -147,21 +147,21 @@ class ROB()(implicit val params: Parameters) extends Module {
 
     val robIdx = io.instSignals.bits.data.robIdx
 
-    entries(robIdx).valid := true.B
-    entries(robIdx).bits.committed := false.B
-    entries(robIdx).bits.flush := false.B
-    entries(robIdx).bits.exception := false.B
-    entries(robIdx).bits.pc := io.instSignals.bits.pc
-    entries(robIdx).bits.data := io.instSignals.bits.data
+    entryValidList(robIdx) := true.B
+    entryCommittedList(robIdx) := false.B
+    entryFlushedList(robIdx) := false.B
+    entryExceptedList(robIdx) := false.B
+    entryPCList(robIdx) := io.instSignals.bits.pc
+    entryDataList(robIdx) := io.instSignals.bits.data
   }
 
   when(io.readRobIdx.valid) {
-    assert(entries(io.readRobIdx.bits).valid, "input robIdx invalid")
-    assert(!entries(io.readRobIdx.bits).bits.committed, "Are you sure? you wanna read a committed instruction")
+    assert(entryValidList(io.readRobIdx.bits), "input robIdx invalid")
+    assert(!entryCommittedList(io.readRobIdx.bits), "Are you sure? you wanna read a committed instruction")
 
     io.robData.valid := true.B
-    io.robData.bits.pc := entries(io.readRobIdx.bits).bits.pc
-    io.robData.bits.data := entries(io.readRobIdx.bits).bits.data
+    io.robData.bits.pc := entryPCList(io.readRobIdx.bits)
+    io.robData.bits.data := entryDataList(io.readRobIdx.bits)
   }.otherwise {
     io.robData.valid := false.B
     io.robData.bits := DontCare
@@ -170,10 +170,10 @@ class ROB()(implicit val params: Parameters) extends Module {
   when(io.commitRobIdx0.valid) {
     printf(cf"ROB: committing ${io.commitRobIdx0} @ commitRobIdx0\n")
 
-    assert(entries(io.commitRobIdx0.bits).valid, "Invalid instruction being committed")
-    assert(!entries(io.commitRobIdx0.bits).bits.committed, "Cannot commit already committed instruction")
+    assert(entryValidList(io.commitRobIdx0.bits), "Invalid instruction being committed")
+    assert(!entryCommittedList(io.commitRobIdx0.bits), "Cannot commit already committed instruction")
 
-    entries(io.commitRobIdx0.bits).bits.committed := true.B
+    entryCommittedList(io.commitRobIdx0.bits) := true.B
 
     // NOTE: Head can be moved up by one position here itself
     // It would be advantageous too. A new instruction can be allocated
@@ -185,29 +185,29 @@ class ROB()(implicit val params: Parameters) extends Module {
   when(io.commitRobIdx1.valid) {
     printf(cf"ROB: committing ${io.commitRobIdx1} @ commitRobIdx1\n")
 
-    assert(entries(io.commitRobIdx1.bits).valid, "Invalid instruction being committed")
-    assert(!entries(io.commitRobIdx1.bits).bits.committed, "Cannot commit already committed instruction")
+    assert(entryValidList(io.commitRobIdx1.bits), "Invalid instruction being committed")
+    assert(!entryCommittedList(io.commitRobIdx1.bits), "Cannot commit already committed instruction")
 
-    entries(io.commitRobIdx1.bits).bits.committed := true.B
+    entryCommittedList(io.commitRobIdx1.bits) := true.B
   }
 
   // keep commiting the instructions in the case of O3
-  when(entries(robHead).valid && entries(robHead).bits.committed && robHead =/= robTail) {
+  when(entryValidList(robHead) && entryCommittedList(robHead) && robHead =/= robTail) {
     printf(cf"ROB: retiring rob head: $robHead, tail: $robTail\n")
 
     val nextRobHead = robHead + 1.U
 
-    entries(robHead).valid := false.B
+    entryValidList(robHead) := false.B
 
     io.retireInst.valid := true.B
-    io.retireInst.bits.pc := entries(robHead).bits.pc
-    io.retireInst.bits.flush := entries(robHead).bits.flush
-    io.retireInst.bits.signals := entries(robHead).bits.data
+    io.retireInst.bits.pc := entryPCList(robHead)
+    io.retireInst.bits.flush := entryFlushedList(robHead)
+    io.retireInst.bits.signals := entryDataList(robHead)
 
     // todo: currently not handling exceptions
-    assert(!entries(robHead).bits.exception, cf"Exception thrown at robIdx: $robHead")
+    assert(!entryExceptedList(robHead), cf"Exception thrown at robIdx: $robHead")
 
-    when(entries(robHead).bits.flush) {
+    when(entryFlushedList(robHead)) {
       printf(cf"ROB: flushing\n")
       robTail := nextRobHead
     }
@@ -221,9 +221,9 @@ class ROB()(implicit val params: Parameters) extends Module {
   when(io.predictionRobIdx.valid) {
     val nextRobIdx = io.predictionRobIdx.bits + 1.U
 
-    io.prediction.valid := entries(nextRobIdx).valid
+    io.prediction.valid := entryValidList(nextRobIdx)
     io.prediction.bits.robIdx := nextRobIdx
-    io.prediction.bits.pc := entries(nextRobIdx).bits.pc
+    io.prediction.bits.pc := entryPCList(nextRobIdx)
   }.otherwise {
     io.prediction.valid := false.B
     io.prediction.bits := DontCare

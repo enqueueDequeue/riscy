@@ -365,7 +365,7 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   // Reg Read
   val registers = Module(new PhyRegs())
 
-  rob.io.readRobIdx.valid := iqRRSignals.valid
+  rob.io.readRobIdx.valid := !flush && iqRRSignals.valid
   rob.io.readRobIdx.bits := iqRRSignals.bits.robIdx
 
   when(rob.io.robData.valid) {
@@ -373,8 +373,6 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   }.otherwise {
     printf(cf"O3: pipeline stalled\n")
   }
-
-  assert(rob.io.robData.valid === iqRRSignals.valid)
 
   registers.io.rs1 := rob.io.robData.bits.data.renameSignals.rs1PhyReg
   registers.io.rs2 := rob.io.robData.bits.data.renameSignals.rs2PhyReg

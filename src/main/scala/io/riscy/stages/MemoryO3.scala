@@ -60,6 +60,8 @@ class MemoryO3()(implicit params: Parameters) extends Module {
   val nROBEntries = params.nROBEntries
 
   assert(dataWidth <= 8 * bitWidth)
+  assert(isPow2(nLdQEntries))
+  assert(isPow2(nStQEntries))
 
   val io = IO(new Bundle {
     // Processor interface
@@ -161,12 +163,16 @@ class MemoryO3()(implicit params: Parameters) extends Module {
     val idxW = Wire(Valid(UInt(log2Ceil(nLdQEntries).W)))
 
     if (idx < nLdQEntries) {
-      val ldEntry = loadQueue(idx)
+      val loadQueueLen = loadQueueTail - loadQueueHead
+      val idxMatches = idx.U < loadQueueLen
+
+      val correctedIdx = idx.U + loadQueueHead
+      val ldEntry = loadQueue(correctedIdx)
 
       idxW.valid := true.B
-      idxW.bits := idx.U
+      idxW.bits := correctedIdx
 
-      (ldEntry.reserved && ldEntry.address.valid && !ldEntry.fired, idxW)
+      (ldEntry.reserved && ldEntry.address.valid && !ldEntry.fired && idxMatches, idxW)
     } else {
       idxW.valid := false.B
       idxW.bits := DontCare
@@ -184,20 +190,10 @@ class MemoryO3()(implicit params: Parameters) extends Module {
   io.readException.valid := false.B
   io.readException.bits := DontCare
 
-  when(io.flush) {
-    loadQueueHead := 0.U
-    loadQueueTail := 0.U
-
-    storeQueueTail := storeRetireTail
-
-    requestInProgress.bits.ignore := true.B
-
-    readOutIdx.valid := false.B
-    readOutIdx.bits := DontCare
-  }
-
   when(io.allocate.valid) {
     printf(cf"Memory: trying to allocate, allocate: ${io.allocate} ldCanAllocate: $ldCanAllocate, stCanAllocate: $stCanAllocate\n")
+    printf(cf"Memory: loadQueueHead: $loadQueueHead tail: $loadQueueTail\n")
+    printf(cf"Memory: storeQueueHead: $storeQueueHead retireTail: $storeRetireTail tail: $storeQueueTail\n")
 
     when(io.allocate.bits === MemRWDirection.read) {
       io.allocatedIdx.valid := ldCanAllocate
@@ -452,51 +448,51 @@ class MemoryO3()(implicit params: Parameters) extends Module {
       val storeQueueLen = storeQueueTail - storeQueueHead
       val ldIdx = requestInProgress.bits.idx.asLoadIndex()
 
-      printf(cf"Memory: loaded: ${ackData.value}\n")
+      printf(cf"Memory: loaded: ldIdx: $ldIdx = ${ackData.value}\n")
 
       val value = Wire(Vec(dataWidth, Bool()))
 
       // Reversing from main memory here
       value := Reverse(ackData.value).asBools
 
-      assert(loadQueue(ldIdx).address.valid)
-      assert(loadQueue(ldIdx).mask.valid)
+      when(!requestInProgress.bits.ignore) {
+        assert(loadQueue(ldIdx).address.valid)
+        assert(loadQueue(ldIdx).mask.valid)
 
-      for (off <- 0 until nStQEntries) {
-        val idx = storeQueueHead + off.U
+        for (off <- 0 until nStQEntries) {
+          val idx = storeQueueHead + off.U
 
-        val stEntry = storeQueue(idx)
+          val stEntry = storeQueue(idx)
 
-        when(off.U < storeQueueLen && stEntry.reserved && stEntry.retired) {
-          assert(stEntry.address.valid)
-          assert(stEntry.data.valid)
-          assert(stEntry.mask.valid)
+          when(off.U < storeQueueLen && stEntry.reserved && stEntry.retired) {
+            assert(stEntry.address.valid)
+            assert(stEntry.data.valid)
+            assert(stEntry.mask.valid)
 
-          val ldMask = loadQueue(ldIdx).mask.bits
-          val ldAddr = align(loadQueue(ldIdx).address.bits, dataBytes)
+            val ldMask = loadQueue(ldIdx).mask.bits
+            val ldAddr = align(loadQueue(ldIdx).address.bits, dataBytes)
 
-          val stMask = stEntry.mask.bits
-          val stAddr = align(stEntry.address.bits, dataBytes)
+            val stMask = stEntry.mask.bits
+            val stAddr = align(stEntry.address.bits, dataBytes)
 
-          when(ldAddr === stAddr && (ldMask & stMask) =/= 0.U) {
-            val m = stEntry.mask.bits
-            val d = stEntry.data.bits
+            when(ldAddr === stAddr && (ldMask & stMask) =/= 0.U) {
+              val m = stEntry.mask.bits
+              val d = stEntry.data.bits
 
-            for (w <- 0 until dataBytes) {
-              when(m(w)) {
-                for (bitIdx <- 0 until bitWidth) {
-                  value(w * bitWidth + bitIdx) := d(w * bitWidth + bitIdx)
+              for (w <- 0 until dataBytes) {
+                when(m(w)) {
+                  for (bitIdx <- 0 until bitWidth) {
+                    value(w * bitWidth + bitIdx) := d(w * bitWidth + bitIdx)
+                  }
                 }
               }
             }
           }
         }
-      }
 
-      loadQueue(ldIdx).data.valid := true.B
-      loadQueue(ldIdx).data.bits := value.asUInt
+        loadQueue(ldIdx).data.valid := true.B
+        loadQueue(ldIdx).data.bits := value.asUInt
 
-      when(!requestInProgress.bits.ignore) {
         readOutIdx.valid := true.B
         readOutIdx.bits := ldIdx
       }
@@ -538,6 +534,18 @@ class MemoryO3()(implicit params: Parameters) extends Module {
   }.otherwise {
     io.readDataOut.valid := false.B
     io.readDataOut.bits := DontCare
+  }
+
+  when(io.flush) {
+    loadQueueHead := 0.U
+    loadQueueTail := 0.U
+
+    storeQueueTail := storeRetireTail
+
+    requestInProgress.bits.ignore := true.B
+
+    readOutIdx.valid := false.B
+    readOutIdx.bits := DontCare
   }
 }
 

@@ -42,6 +42,8 @@ class Rename()(implicit val params: Parameters) extends Module {
 
   // right after reset
   val freeRegs = RegInit((~0.U(nPhyRegs.W)).asUInt)
+  val freeRegsW = Wire(UInt(nPhyRegs.W))
+  val freeRegsW2 = Wire(UInt(nPhyRegs.W))
 
   val freeRegIdx = PriorityMux(Seq.tabulate(nPhyRegs + 1) { idx =>
     assert(idx <= nPhyRegs)
@@ -71,6 +73,12 @@ class Rename()(implicit val params: Parameters) extends Module {
   io.rs1PhyReg := rat(io.rs1)
   io.rs2PhyReg := rat(io.rs2)
 
+  when(io.rd.valid) {
+    rat(io.rd.bits.arch) := io.rd.bits.phy
+  }
+
+  freeRegsW := freeRegs
+
   when(io.retire.valid) {
     val freeRegister = rrat(io.retire.bits.arch)
     val freeRegisterValid = rratValid(io.retire.bits.arch)
@@ -82,7 +90,7 @@ class Rename()(implicit val params: Parameters) extends Module {
     rratValid := rratValid | (1.U << io.retire.bits.arch).asUInt
 
     when(freeRegisterValid) {
-      freeRegs := (freeRegs | (1.U << freeRegister).asUInt)
+      freeRegsW := (freeRegs | (1.U << freeRegister).asUInt)
     }
 
     io.deallocationIdx.valid := freeRegisterValid
@@ -92,14 +100,35 @@ class Rename()(implicit val params: Parameters) extends Module {
     io.deallocationIdx.bits := DontCare
   }
 
-  when(io.rd.valid) {
-    rat(io.rd.bits.arch) := io.rd.bits.phy
+  freeRegsW2 := freeRegsW
+
+  when(freeRegIdx.valid && io.allocate) {
+    assert(!io.flush, "Illegal state detected, cannot be allocating during flush")
+
+    val phyReg = freeRegIdx.bits
+
+    printf(cf"Allocating p$phyReg <- $freeRegIdx\n")
+
+    freeRegsW2 := freeRegsW & (~(1.U << freeRegIdx.bits)).asUInt
+
+    io.allocatedIdx.valid := true.B
+    io.allocatedIdx.bits := phyReg
+  }.otherwise {
+    printf(cf"Rename: allocate: ${io.allocate} freeRegs = $freeRegsW%x\n")
+
+    io.allocatedIdx.valid := false.B
+    io.allocatedIdx.bits := DontCare
   }
 
+  freeRegs := freeRegsW2
+
   when(io.flush) {
+    assert(!io.retire.valid)
+    assert(!io.allocate)
+
     val nextFreeRegs = Wire(UInt(nPhyRegs.W))
 
-    printf(cf"flushing")
+    printf(cf"Rename: flushing\n")
 
     for (idx <- 0 until nArchRegs) {
       printf(cf"Rename: Copying ${rrat(idx)} valid: ${rratValid(idx)} -> ${rat(idx)}\n")
@@ -110,7 +139,7 @@ class Rename()(implicit val params: Parameters) extends Module {
     nextFreeRegs := (~occupiedRegs.reduce(_ | _)).asUInt
 
     for (idx <- 0 until nArchRegs) {
-      // idx is not valid meaning, that the no instruction using this dst
+      // idx is not valid means: no instruction using this dst
       // register has retired yet. So, no instruction after the flush should
       // read this register. So, even if the bits are pointing to a random index
       // it is still fine.
@@ -120,7 +149,7 @@ class Rename()(implicit val params: Parameters) extends Module {
     }
 
     printf(cf"Rename: freeRegs: $freeRegs%b\n")
-    printf(cf"Rename: freeRegs: ${nextFreeRegs}%b\n")
+    printf(cf"Rename: freeRegs: $nextFreeRegs%b\n")
 
     freeRegs := nextFreeRegs
     io.allocatedRegs.valid := true.B
@@ -128,23 +157,5 @@ class Rename()(implicit val params: Parameters) extends Module {
   }.otherwise {
     io.allocatedRegs.valid := false.B
     io.allocatedRegs.bits := DontCare
-  }
-
-  when(freeRegIdx.valid && io.allocate) {
-    assert(!io.flush, "Illegal state detected, cannot be allocating during flush")
-
-    val phyReg = freeRegIdx.bits
-
-    printf(cf"Allocating p$phyReg <- $freeRegIdx\n")
-
-    freeRegs := freeRegs & (~(1.U << freeRegIdx.bits)).asUInt
-
-    io.allocatedIdx.valid := true.B
-    io.allocatedIdx.bits := phyReg
-  }.otherwise {
-    printf(cf"Rename: allocate: ${io.allocate} freeRegs = $freeRegs%x\n")
-
-    io.allocatedIdx.valid := false.B
-    io.allocatedIdx.bits := DontCare
   }
 }

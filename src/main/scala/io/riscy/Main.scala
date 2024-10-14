@@ -90,16 +90,19 @@ object Main {
     println("")
   }
 
-  def testO3(dut: OutOfOrderCPU, instructions: Seq[Long], memory: Array[Byte], endInstIdx: Int, targetCountDown: Int = 100): Unit = {
+  def testO3(dut: OutOfOrderCPU, instructions: Seq[Long], memory: Array[Byte], endInstIdx: Int, targetCountDown: Int = 100, memoryLatency: Int = 0): Unit = {
     val memSize = memory.length
 
     var ackValid = false
+    var ackCounter = 0
     var ackAddr = 0L
     var ackSize = 0
     var readValue = 0L
 
     var completed = false
     var countDown = 0
+
+    assert(memoryLatency >= 0)
 
     breakable {
       while(true) {
@@ -139,15 +142,19 @@ object Main {
         }
 
         if (ackValid) {
-          ackValid = false
+          if (0 < ackCounter) {
+            ackCounter -= 1
+          } else {
+            ackValid = false
 
-          require(dut.io.dMem.valid.peek().litToBoolean)
-          require(dut.io.dMem.bits.addr.peek().litValue == ackAddr)
+            require(dut.io.dMem.valid.peek().litToBoolean)
+            require(dut.io.dMem.bits.addr.peek().litValue == ackAddr)
 
-          dut.io.dMemAck.valid.poke(true.B)
-          dut.io.dMemAck.bits.value.poke(((BigInt(readValue >>> 1) << 1) + (readValue & 1)).U)
-          dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
-          dut.io.dMemAck.ready.expect(true.B)
+            dut.io.dMemAck.valid.poke(true.B)
+            dut.io.dMemAck.bits.value.poke(((BigInt(readValue >>> 1) << 1) + (readValue & 1)).U)
+            dut.io.dMemAck.bits.size.poke(log2Ceil(ackSize).U)
+            dut.io.dMemAck.ready.expect(true.B)
+          }
         } else if (dut.io.dMem.valid.peek().litToBoolean) {
           dut.io.dMem.ready.poke(true.B)
 
@@ -196,6 +203,7 @@ object Main {
           }
 
           ackValid = true
+          ackCounter = memoryLatency
           dut.io.dMemAck.valid.poke(false.B)
         } else {
           dut.io.dMemAck.valid.poke(false.B)
@@ -411,6 +419,7 @@ object Main {
 
         dut.io.rd.valid.poke(false.B)
         dut.io.allocate.poke(false.B)
+        dut.io.retire.valid.poke(false.B)
         dut.io.flush.poke(true.B)
         dut.clock.step()
 

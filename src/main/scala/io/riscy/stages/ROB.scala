@@ -82,6 +82,7 @@ class ROB()(implicit val params: Parameters) extends Module {
 
   val canAllocate = robHead =/= (robTail + 2.U)
 
+  // intermediate rob tails
   val robTailIn1 = Wire(UInt(log2Ceil(nROBEntries).W))
   val robTailIn2 = Wire(UInt(log2Ceil(nROBEntries).W))
 
@@ -91,10 +92,15 @@ class ROB()(implicit val params: Parameters) extends Module {
     printf(cf"ROB: flushing: ${io.flush.bits}\n")
 
     when(!entryValidList(io.flush.bits.robIdx)) {
-      assert(robTail === io.flush.bits.robIdx, "Cannot flush invalid and non-tail entry")
-
-      // allocate the rob
-      robTailIn1 := robTail + 1.U
+      // if this entry has not been allocated yet
+      // then allocate
+      // But for some reason, if this is allocated and hasn't
+      // been written yet, then just mark it as invalid
+      // before even it puts in any signals
+      when(robTail === io.flush.bits.robIdx) {
+        // allocate the rob
+        robTailIn1 := robTail + 1.U
+      }
 
       entryValidList(io.flush.bits.robIdx) := true.B
       entryCommittedList(io.flush.bits.robIdx) := true.B
@@ -131,6 +137,9 @@ class ROB()(implicit val params: Parameters) extends Module {
     io.allocatedIdx.bits := robTail
 
     entryValidList(robTail) := false.B
+    entryCommittedList(robTail) := false.B
+    entryFlushedList(robTail) := false.B
+    entryExceptedList(robTail) := false.B
 
     robTailIn2 := robTailIn1 + 1.U
   }.otherwise {
@@ -148,16 +157,13 @@ class ROB()(implicit val params: Parameters) extends Module {
     val robIdx = io.instSignals.bits.data.robIdx
 
     entryValidList(robIdx) := true.B
-    entryCommittedList(robIdx) := false.B
-    entryFlushedList(robIdx) := false.B
-    entryExceptedList(robIdx) := false.B
     entryPCList(robIdx) := io.instSignals.bits.pc
     entryDataList(robIdx) := io.instSignals.bits.data
   }
 
   when(io.readRobIdx.valid) {
     assert(entryValidList(io.readRobIdx.bits), "input robIdx invalid")
-    assert(!entryCommittedList(io.readRobIdx.bits), "Are you sure? you wanna read a committed instruction")
+    assert(!(entryCommittedList(io.readRobIdx.bits) && !entryFlushedList(io.readRobIdx.bits)), "Are you sure? you wanna read a committed instruction")
 
     io.robData.valid := true.B
     io.robData.bits.pc := entryPCList(io.readRobIdx.bits)
@@ -221,6 +227,8 @@ class ROB()(implicit val params: Parameters) extends Module {
   when(io.predictionRobIdx.valid) {
     val nextRobIdx = io.predictionRobIdx.bits + 1.U
 
+    // PC can be passed in during allocation. Then, an entry would be valid
+    // if it's allocated rather than if it has put in it's signals in ROB
     io.prediction.valid := entryValidList(nextRobIdx)
     io.prediction.bits.robIdx := nextRobIdx
     io.prediction.bits.pc := entryPCList(nextRobIdx)

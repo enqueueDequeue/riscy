@@ -8,6 +8,9 @@ object OpCode {
   // https://five-embeddev.com/riscv-user-isa-manual/Priv-v1.12/instr-table.html
   // https://github.com/riscv/riscv-opcodes
 
+  // NOTE: When updating the architecture
+  // Also update the branch predictor in case of op code collisions
+
   // RV32
   val ADD =       BitPat("b0000000??????????000?????0110011")
   val ADDI =      BitPat("b?????????????????000?????0010011")

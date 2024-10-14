@@ -4,23 +4,27 @@ import chisel3.util.{Cat, Fill, MuxLookup}
 import chisel3.{Bool, Bundle, Input, Module, Mux, Output, PrintableHelper, UInt, fromIntToLiteral, fromIntToWidth, printf}
 import io.riscy.stages.Memory.{getSizeBytes, getSizeBytesLit, isSigned}
 import io.riscy.stages.MemRWSize
-import io.riscy.stages.signals.Defaults.BIT_WIDTH
+import io.riscy.stages.signals.Parameters
 
-class Memory(addressWidth: Int, dataWidth: Int) extends Module {
-  assert(dataWidth <= 8 * BIT_WIDTH)
+class Memory()(implicit val params: Parameters) extends Module {
+  val addrWidth = params.addrWidth
+  val dataWidth = params.dataWidth
+  val bitWidth = params.bitWidth
+
+  assert(dataWidth <= 8 * bitWidth)
 
   val io = IO(new Bundle {
-    val address = Input(UInt(addressWidth.W))
+    val address = Input(UInt(addrWidth.W))
     val writeSize = Input(MemRWSize())
     val writeData = Input(UInt(dataWidth.W))
     val readSize = Input(MemRWSize())
     val readData = Output(UInt(dataWidth.W))
 
-    val dReadLen = Output(UInt((dataWidth / BIT_WIDTH).W))
-    val dReadAddr = Output(UInt(addressWidth.W))
+    val dReadLen = Output(UInt((dataWidth / bitWidth).W))
+    val dReadAddr = Output(UInt(addrWidth.W))
     val dReadValue = Input(UInt(dataWidth.W))
-    val dWriteLen = Output(UInt((dataWidth / BIT_WIDTH).W))
-    val dWriteAddr = Output(UInt(addressWidth.W))
+    val dWriteLen = Output(UInt((dataWidth / bitWidth).W))
+    val dWriteAddr = Output(UInt(addrWidth.W))
     val dWriteValue = Output(UInt(dataWidth.W))
   })
 
@@ -51,7 +55,7 @@ class Memory(addressWidth: Int, dataWidth: Int) extends Module {
       .filter { s => s != MemRWSize.BYTES_NO }
       .map { s =>
         val readSizeBytes = getSizeBytesLit(s)
-        val dataOffsetBits = dataWidth - (BIT_WIDTH * readSizeBytes)
+        val dataOffsetBits = dataWidth - (bitWidth * readSizeBytes)
 
         s -> Cat(extension, io.dReadValue)(dataWidth + dataOffsetBits, dataOffsetBits)
       })

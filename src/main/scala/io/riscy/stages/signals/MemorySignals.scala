@@ -7,5 +7,5 @@ class MemorySignals(dataWidth: Int) extends Bundle {
 }
 
 object MemorySignals {
-  def apply(): MemorySignals = new MemorySignals(Defaults.DATA_WIDTH)
+  def apply()(implicit params: Parameters): MemorySignals = new MemorySignals(params.dataWidth)
 }

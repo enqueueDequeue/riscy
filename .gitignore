@@ -2,3 +2,4 @@
 .idea/**
 test_run_dir/**
 **/target/**
+logs.log

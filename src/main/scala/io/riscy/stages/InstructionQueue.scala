@@ -35,8 +35,6 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
     val readyInstSignals = Output(Valid(UInt(log2Ceil(nROBEntries).W)))
   })
 
-  val nEntriesLog = log2Ceil(nEntries)
-
   // mark if the station is actually allocated or not
   // val allocations = RegInit(VecInit(Seq.fill(nEntries) { false.B }))
   val allocations = RegInit(0.U(nEntries.W))
@@ -93,7 +91,11 @@ class InstructionQueue()(implicit val params: Parameters) extends Module {
 
   // wake up instructions whose registers are ready
   for (e <- 0 until nEntries) {
-    val deps = VecInit(Seq.tabulate(nPhyRegs) { reg => Mux(io.wakeUpRegs(reg), 0.U, map(e)(reg)) })
+    // logic which resolves the dependencies:
+    // => Mux(io.wakeUpRegs(reg), 0.U, map(e)(reg))
+    // is also logically equivalent to the following piece of code
+
+    val deps = VecInit(Seq.tabulate(nPhyRegs) { reg => !io.wakeUpRegs(reg) & map(e)(reg) })
     val depPending = deps.reduceTree(_ | _)
 
     readyInsts(e) := !depPending & occupancies(e) & allocations(e)

@@ -9,5 +9,5 @@ class ExecuteSignals(addressWidth:Int, dataWidth: Int) extends Bundle {
 }
 
 object ExecuteSignals {
-  def apply(): ExecuteSignals = new ExecuteSignals(Defaults.ADDR_WIDTH, Defaults.DATA_WIDTH)
+  def apply()(implicit params: Parameters): ExecuteSignals = new ExecuteSignals(params.addrWidth, params.dataWidth)
 }

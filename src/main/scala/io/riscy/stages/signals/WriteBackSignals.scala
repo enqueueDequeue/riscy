@@ -7,5 +7,5 @@ class WriteBackSignals(dataWidth: Int) extends Bundle {
 }
 
 object WriteBackSignals {
-  def apply(): WriteBackSignals = new WriteBackSignals(Defaults.DATA_WIDTH)
+  def apply()(implicit params: Parameters): WriteBackSignals = new WriteBackSignals(params.dataWidth)
 }

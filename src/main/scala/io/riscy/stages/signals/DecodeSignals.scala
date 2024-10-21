@@ -2,10 +2,9 @@ package io.riscy.stages.signals
 
 import chisel3.util.log2Ceil
 import chisel3.{Bool, Bundle, UInt, fromIntToWidth}
-import io.riscy.stages.signals.Defaults.{DATA_WIDTH, N_ARCH_REGISTERS}
 import io.riscy.stages.{ExecuteOp, MemRWSize}
 
-class DecodeSignals(nArchRegisters:Int, dataWidth: Int) extends Bundle {
+class DecodeSignals(nArchRegisters: Int, dataWidth: Int) extends Bundle {
   val jump = Bool()
   val branch = Bool()
   // Actually, memToReg is true whenever
@@ -27,5 +26,5 @@ class DecodeSignals(nArchRegisters:Int, dataWidth: Int) extends Bundle {
 }
 
 object DecodeSignals {
-  def apply(): DecodeSignals = new DecodeSignals(N_ARCH_REGISTERS, DATA_WIDTH)
+  def apply()(implicit params: Parameters): DecodeSignals = new DecodeSignals(params.nArchRegs, params.dataWidth)
 }

@@ -2,16 +2,18 @@ package io.riscy.stages
 
 import chisel3.util.{Cat, Fill}
 import chisel3.{Bundle, Input, Module, Mux, Output, PrintableHelper, UInt, fromBooleanToLiteral, fromIntToLiteral, fromIntToWidth, printf, when}
-import io.riscy.stages.signals.DecodeSignals
-import io.riscy.stages.signals.Defaults.{INST_WIDTH, N_ARCH_REGISTERS}
+import io.riscy.stages.signals.Utils.NOP
+import io.riscy.stages.signals.{DecodeSignals, Parameters}
 
-class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
-  assert(instructionWidth == INST_WIDTH)
+class Decode()(implicit val params: Parameters) extends Module {
+  val instWidth = params.instWidth
+  val dataWidth = params.dataWidth
+
   assert(dataWidth >= 32)
 
   val io = IO(new Bundle {
-    val inst = Input(UInt(instructionWidth.W))
-    val signals = Output(new DecodeSignals(N_ARCH_REGISTERS, dataWidth))
+    val inst = Input(UInt(instWidth.W))
+    val signals = Output(DecodeSignals())
   })
 
   // the sign for all the instructions is always in the last bit
@@ -45,7 +47,11 @@ class Decode(instructionWidth: Int, dataWidth: Int) extends Module {
   io.signals.rs2 := rs2
   io.signals.rd := rd
 
-  when(OpCode.ADD === io.inst) {
+  when(NOP.U === io.inst) {
+    printf(cf"inst: NOP\n")
+
+    io.signals.aluOp := ExecuteOp.NOP
+  }.elsewhen(OpCode.ADD === io.inst) {
     printf(cf"inst: ADD\n")
 
     io.signals.aluOp := ExecuteOp.ADD

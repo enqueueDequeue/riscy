@@ -10,4 +10,6 @@ case class Parameters(nArchRegs: Int,
                       nIQEntries: Int,
                       nROBEntries: Int,
                       nLDQEntries: Int,
-                      nSTQEntries: Int)
+                      nSTQEntries: Int,
+                      nBPredEntries: Int,
+                      nRetStackEntries: Int)

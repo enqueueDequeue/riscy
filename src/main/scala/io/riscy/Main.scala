@@ -224,8 +224,10 @@ object Main {
                 nIQEntries: Int = 64,
                 nROBEntries: Int = 64,
                 nLDQEntries: Int = 8,
-                nSTQEntries: Int = 8): Parameters = {
-    Parameters(nArchRegs, nPhyRegs, instWidth, wordWidth, dataWidth, addrWidth, bitWidth, nIQEntries, nROBEntries, nLDQEntries, nSTQEntries)
+                nSTQEntries: Int = 8,
+                nBPredEntries: Int = 256,
+                nRetStackEntries: Int = 64): Parameters = {
+    Parameters(nArchRegs, nPhyRegs, instWidth, wordWidth, dataWidth, addrWidth, bitWidth, nIQEntries, nROBEntries, nLDQEntries, nSTQEntries, nBPredEntries, nRetStackEntries)
   }
 
   def main(args: Array[String]): Unit = {

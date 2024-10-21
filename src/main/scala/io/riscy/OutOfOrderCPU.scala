@@ -5,7 +5,7 @@ import chisel3.{Bool, Bundle, DontCare, Flipped, Module, Mux, PrintableHelper, R
 import io.riscy.OutOfOrderCPU.isValid
 import io.riscy.stages.signals.Utils.{NOP, initStage, initValid}
 import io.riscy.stages.signals.{AllocSignals, DecodeSignals, FetchSignals, Parameters, ROBSignals, RegReadSignals, RenameSignals, Stage}
-import io.riscy.stages.{Decode, Execute, ExecuteOp, Fetch, InstructionQueue, LoadStoreIndex, MemRWDirection, MemRWSize, MemoryO3, PhyRegs, ROB, Rename}
+import io.riscy.stages.{BranchPredictor, Decode, Execute, ExecuteOp, Fetch, InstructionQueue, LoadStoreIndex, MemRWDirection, MemRWSize, MemoryO3, PhyRegs, ROB, Rename}
 
 class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
   val addrWidth = params.addrWidth
@@ -100,6 +100,10 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
 
   // Fetch
   val fetch = Module(new Fetch())
+  val bPred = Module(new BranchPredictor())
+
+  bPred.io.update.valid := false.B
+  bPred.io.update.bits := DontCare
 
   io.iReadAddr <> fetch.io.iReadAddr
   io.iReadValue <> fetch.io.iReadValue
@@ -118,10 +122,16 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
     ifIdSignalsW.bits.stage.fetch.instruction.valid := true.B
     ifIdSignalsW.bits.stage.fetch.instruction.bits := fetch.io.inst.bits
 
+    bPred.io.predict.addr := pc
+    bPred.io.predict.inst := fetch.io.inst.bits
+
     fStall := false.B
   }.otherwise {
     ifIdSignalsW.valid := false.B
     ifIdSignalsW.bits := DontCare
+
+    bPred.io.predict.addr := pc
+    bPred.io.predict.inst := NOP.U
 
     fStall := true.B
   }
@@ -432,16 +442,30 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
 
     when(rrExMemSignals.bits.stage.rob.decodeSignals.branch) {
       val actualNextPc = Mux(execute.io.zero, pcImm, pc4)
+      val shouldFlush = (predictedNextPcValid && predictedNextPc =/= actualNextPc) || (!predictedNextPcValid)
 
-      exFlushIdx.valid := (predictedNextPcValid && predictedNextPc =/= actualNextPc) || (!predictedNextPcValid)
+      printf(cf"O3: branch resolved: flushing: $shouldFlush, actualNextPc: $actualNextPc, predicted: $predictedNextPc valid: ($predictedNextPcValid)\n")
+
+      exFlushIdx.valid := shouldFlush
       exFlushIdx.bits.nextPc := actualNextPc
       exFlushIdx.bits.robIdx := nextRobIdx
+
+      bPred.io.update.valid := true.B
+      bPred.io.update.bits.branchInst := rrExMemSignals.bits.stage.rob.fetchSignals.instruction.bits
+      bPred.io.update.bits.targetAddr := actualNextPc
     }.elsewhen(rrExMemSignals.bits.stage.rob.decodeSignals.jump) {
       val actualNextPc = execute.io.result
+      val shouldFlush = (predictedNextPcValid && predictedNextPc =/= actualNextPc) || (!predictedNextPcValid)
 
-      exFlushIdx.valid := (predictedNextPcValid && predictedNextPc =/= actualNextPc) || (!predictedNextPcValid)
+      printf(cf"O3: jump resolved: flushing: $shouldFlush, actualNextPc: $actualNextPc, predicted: $predictedNextPc valid: ($predictedNextPcValid)\n")
+
+      exFlushIdx.valid := shouldFlush
       exFlushIdx.bits.nextPc := actualNextPc
       exFlushIdx.bits.robIdx := nextRobIdx
+
+      bPred.io.update.valid := true.B
+      bPred.io.update.bits.branchInst := rrExMemSignals.bits.stage.rob.fetchSignals.instruction.bits
+      bPred.io.update.bits.targetAddr := actualNextPc
     }.otherwise {
       exFlushIdx.valid := false.B
       exFlushIdx.bits := DontCare
@@ -624,7 +648,9 @@ class OutOfOrderCPU()(implicit val params: Parameters) extends Module {
 
   // no flush or stall, so go ahead with execution
   when(!flush && !stall) {
-    pc := pc + 4.U
+    // ask branch predictor for the next address
+    // bPred will return pc + 4 in case of non branch instructions
+    pc := bPred.io.predicted
   }
 
   when(flush) {
